@@ -1,0 +1,45 @@
+<Window x:Class="WalkDistance.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:WalkDistance.App"
+        mc:Ignorable="d"
+        Title="보행거리 계산 - MVP" Height="700" Width="1000">
+    <DockPanel>
+        <Menu DockPanel.Dock="Top">
+            <MenuItem Header="파일(_F)">
+                <MenuItem Header="DXF 열기(_O)" Click="OnOpenDxf"/>
+                <Separator/>
+                <MenuItem Header="프로젝트 저장(_S)" Click="OnSaveProject"/>
+                <MenuItem Header="프로젝트 열기(_P)" Click="OnOpenProject"/>
+                <Separator/>
+                <MenuItem Header="종료(_X)" Click="OnExit"/>
+            </MenuItem>
+        </Menu>
+
+        <StatusBar DockPanel.Dock="Bottom">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusText" Text="DXF 파일을 불러오세요."/>
+            </StatusBarItem>
+        </StatusBar>
+
+        <ToolBarTray DockPanel.Dock="Top">
+            <ToolBar>
+                <ToggleButton x:Name="AddExitToggle" Content="출구 지정 모드" Width="90"
+                              Checked="OnAddExitModeChanged" Unchecked="OnAddExitModeChanged"/>
+                <Button Content="출구 초기화" Click="OnClearExits"/>
+                <Separator/>
+                <TextBlock Text="셀 크기(m):" VerticalAlignment="Center" Margin="4,0"/>
+                <TextBox x:Name="CellSizeBox" Width="50" Text="0.3" VerticalAlignment="Center"/>
+                <Separator/>
+                <Button x:Name="CalculateButton" Content="보행거리 계산" FontWeight="Bold" Click="OnCalculate"/>
+            </ToolBar>
+        </ToolBarTray>
+
+        <Border BorderBrush="Gray" BorderThickness="1" Background="White">
+            <Canvas x:Name="DrawingCanvas" ClipToBounds="True"
+                    SizeChanged="OnCanvasSizeChanged" MouseLeftButtonDown="OnCanvasClick"/>
+        </Border>
+    </DockPanel>
+</Window>
