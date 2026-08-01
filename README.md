@@ -23,9 +23,10 @@ dotnet run --project src/WalkDistance.App/WalkDistance.App.csproj
    중인 선만 취소하고, 지정 중인 선이 없으면 마지막 완료 선분을 삭제한다. 우클릭은
    출구 지정 모드에서만 동작하며, 모드를 끄면 지정 중인 선이 취소된다.
 3. 미터 단위 셀 크기를 입력하고 `보행거리 계산`을 누른다. 히트맵, 가장 먼 도달
-   가능 지점, 최대 보행거리와 출구까지의 실제 최단경로가 점선으로 표시된다.
+   가능 지점, 최대 보행거리와 출구까지의 격자 해상도 기반 any-angle 경로가 점선으로 표시된다.
 4. 계산 뒤 도면의 임의 지점을 클릭하면 가장 가까운 출구까지의 보행거리와 실제
-   최단경로가 표시된다. 다른 지점을 클릭하면 기존 조회 점선은 새 경로로 교체된다.
+   좌표에서 시작하는 안전한 경로가 표시된다. 다른 지점을 클릭하면 기존 조회 점선은
+   새 경로로 교체된다.
    벽이거나 도달 불가능한 지점도 구분해 안내한다.
 5. `프로젝트 저장`은 벽 geometry, 출구 선분, 셀 크기, 단위 배율을 v3 JSON 안에
    넣는다. 원본 DXF를 옮기거나 삭제해도 v3 프로젝트를 다시 열 수 있다.
@@ -46,21 +47,25 @@ dotnet run --project src/WalkDistance.App/WalkDistance.App.csproj
 
 ## 알고리즘
 
-벽 선분을 입력 셀 크기의 격자로 rasterize한 뒤 .NET의 우선순위 큐를 이용해
-다중 소스 Dijkstra를 수행한다. 각 출구 선분과 한 셀 이내의 통행 가능 셀에는
-벽을 통과하지 않고 도달 가능한 실제 출구 선분상의 접점을 함께 저장한다. 직교 이동은
-셀 크기, 대각선 이동은 `셀 크기 × √2`로 누적하며, 대각선 양옆 중 한 셀이라도
-벽이면 이동을 금지해 코너 컷을 막는다.
+벽 선분을 입력 셀 크기의 격자로 rasterize한 뒤 .NET 우선순위 큐 기반 다중 소스
+Theta*를 수행한다. 8방향 이웃을 확장할 때 현재 predecessor에서 다음 셀까지 보수적인
+supercover line-of-sight가 있으면 그 직선 길이로 완화한다. 따라서 source 선택,
+predecessor, 셀별 거리, 최대 거리, 히트맵과 표시 polyline이 모두 같은 any-angle 경로의
+기하 길이를 사용하며 별도의 사후 string-pull은 하지 않는다. 대각선 양옆 중 한 셀이라도
+벽이면 기본 이동을 금지해 코너 컷을 막는다.
 
-predecessor로 복원한 격자 경로는 실제 클릭 좌표에서 시작한다. 이후 보수적인
-supercover line-of-sight 검사로 벽 셀을 통과하거나 금지된 대각 코너를 자르지 않는
-범위에서 불필요한 셀 중심 꺾임을 제거하고, 가능한 경우 실제 출구 접점에서 끝나는
-연속 polyline으로 표시한다. 선택 지점 거리와 최대 거리 표시는 이 polyline 선분들의
-기하 길이 합계를 사용한다. 벽이 있으면 line-of-sight가 차단되어 실제 개구부를 지난다.
+각 출구 인접 셀에는 실제 출구 선분상의 접점을 저장한다. 일반 line-of-sight는 모든 벽
+셀을 거부한다. 단, 지정된 출구 접점에서 끝나는 마지막 raster 셀만 막혀 있어도 종점을
+그 접점으로 유지할 수 있어 벽 위 출구의 양쪽 통행 영역이 출구에 연결된다. 그 전에 다른
+벽 셀을 지나가는 선분은 계속 거부된다. 조회 좌표는 같은 Theta* tree의 셀 중심 또는
+predecessor에 line-of-sight로 연결하고, UI는 한 번 반환된 polyline과 그 길이를 함께 쓴다.
 
 출구에서 도달할 수 없는 자유 셀은 무한대로 유지하며 최대값과 가장 먼 지점 선정에서
-제외한다. UI는 제외된 셀 수를 알린다. 메모리 급증을 막기 위해 계산 전 격자를 최대
-4,000,000셀로 제한하며, 초과 시 셀 크기를 키우라는 전용 안내를 표시한다.
+제외한다. UI는 제외된 셀 수를 알린다. `N`을 셀 수, `D`를 셀 단위 격자 대각 길이라고
+하면 메모리는 거리/predecessor/방문 배열과 큐에 대해 `O(N)`이고, 최악 시간은 각 완화의
+line-of-sight 순회 때문에 `O(N·D + N log N)`이다. 경로 복원은 `O(L)`이며 quadratic
+string-pull이나 동일 조회 경로의 이중 계산은 없다. 4,000,000셀은 할당 폭주를 막는 상한일
+뿐 속도나 메모리 성공을 보장하지 않으므로 큰 도면에서는 셀 크기를 키워야 한다.
 
 ## 검증
 
@@ -94,13 +99,14 @@ dotnet publish src/WalkDistance.App/WalkDistance.App.csproj -c Release -r win-x6
 - 바이너리 DXF, spline, block insert 확장, hatch 영역은 지원하지 않는다.
 - 벽은 선분을 반 셀 간격으로 샘플링해 막힌 셀로 변환하므로 세밀한 도면은 더 작은
   셀 크기가 필요하다.
-- 최단경로의 도달성과 source 선택은 격자 Dijkstra 해상도에 따르며, 표시 경로는 그
-  안전한 격자 경로를 line-of-sight로 단순화한 polyline이다.
+- Theta*는 raster 격자와 보수적인 line-of-sight에 대한 any-angle 근사이며 원본 벡터
+  geometry의 전역 최단경로를 보장하지 않는다. 다만 보고하는 모든 거리와 경로는 같은
+  Theta* predecessor metric을 사용한다.
 - 본 MVP는 선 중심을 벽으로 취급하며 벽 두께, 문 폭, 사람 반경은 모델링하지 않는다.
 
 ## 구조
 
-- `src/WalkDistance.Core`: DXF, geometry, 격자, Dijkstra, 프로젝트 파일
+- `src/WalkDistance.Core`: DXF, geometry, 격자, Theta*, 프로젝트 파일
 - `src/WalkDistance.App`: 한국어 WPF UI와 히트맵 렌더링
 - `tests/WalkDistance.Core.Tests`: Core 자동 테스트
 - `samples`: 수동 스모크용 DXF

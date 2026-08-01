@@ -7,15 +7,23 @@ public sealed record DistanceMapResult(
     int UnreachableCellCount,
     (int Col, int Row)?[,] Predecessor)
 {
-    internal IReadOnlyDictionary<(int Col, int Row), WorldPoint> SourceContacts { get; init; } =
-        new Dictionary<(int Col, int Row), WorldPoint>();
+    internal IReadOnlyDictionary<(int Col, int Row), DistanceRoot> Roots { get; init; } =
+        new Dictionary<(int Col, int Row), DistanceRoot>();
 }
 
-public readonly record struct DistanceSource(int Col, int Row, WorldPoint ExitPoint);
+public readonly record struct DistanceSource(
+    int Col,
+    int Row,
+    WorldPoint ExitPoint,
+    Segment? ExitSegment = null);
+
+public sealed record WalkingPath(IReadOnlyList<WorldPoint> Points, double Distance);
+
+internal readonly record struct DistanceRoot(WorldPoint Contact, Segment? ExitSegment);
 
 /// <summary>
-/// Multi-source Dijkstra over a walkability grid: computes, for every walkable
-/// cell, the shortest walking distance to the nearest exit cell.
+/// Multi-source Theta* over a walkability grid. Distances and predecessors
+/// describe the same safe any-angle polylines used by path queries.
 /// </summary>
 public static class DistanceMapCalculator
 {
@@ -38,133 +46,153 @@ public static class DistanceMapCalculator
     public static DistanceMapResult Compute(WalkabilityGrid grid, IReadOnlyList<DistanceSource> sources)
     {
         var dist = new double[grid.Rows, grid.Cols];
-        for (int r = 0; r < grid.Rows; r++)
+        for (int row = 0; row < grid.Rows; row++)
         {
-            for (int c = 0; c < grid.Cols; c++)
+            for (int col = 0; col < grid.Cols; col++)
             {
-                dist[r, c] = double.PositiveInfinity;
+                dist[row, col] = double.PositiveInfinity;
             }
         }
 
         var visited = new bool[grid.Rows, grid.Cols];
         var predecessor = new (int Col, int Row)?[grid.Rows, grid.Cols];
-        var sourceContacts = new Dictionary<(int Col, int Row), WorldPoint>();
+        var roots = new Dictionary<(int Col, int Row), DistanceRoot>();
         var queue = new PriorityQueue<(int Col, int Row), double>();
 
         foreach (var source in sources)
         {
-            var (col, row) = (source.Col, source.Row);
-            if (!grid.InBounds(col, row) || grid.IsBlocked(col, row))
+            var cell = (source.Col, source.Row);
+            if (!grid.InBounds(cell.Col, cell.Row) || grid.IsBlocked(cell.Col, cell.Row))
             {
                 continue;
             }
 
-            var center = grid.CellCenter(col, row);
-            var contact = IsFinite(source.ExitPoint) && grid.HasLineOfSight(center, source.ExitPoint)
-                ? source.ExitPoint
-                : center;
-            double sourceDistance = Distance(center, contact);
-            if (dist[row, col] > sourceDistance)
+            var root = new DistanceRoot(source.ExitPoint, source.ExitSegment);
+            var center = grid.CellCenter(cell.Col, cell.Row);
+            if (!HasLineOfSightToRoot(grid, center, root))
             {
-                dist[row, col] = sourceDistance;
-                sourceContacts[(col, row)] = contact;
-                queue.Enqueue((col, row), sourceDistance);
+                continue;
+            }
+
+            double sourceDistance = Distance(center, root.Contact);
+            if (sourceDistance < dist[cell.Row, cell.Col])
+            {
+                dist[cell.Row, cell.Col] = sourceDistance;
+                predecessor[cell.Row, cell.Col] = null;
+                roots[cell] = root;
+                queue.Enqueue(cell, sourceDistance);
             }
         }
 
-        double diagonalStep = grid.CellSize * Math.Sqrt(2);
-
-        while (queue.TryDequeue(out var current, out var currentDist))
+        while (queue.TryDequeue(out var current, out _))
         {
-            var (col, row) = current;
-            if (visited[row, col])
+            if (visited[current.Row, current.Col])
             {
                 continue;
             }
-            visited[row, col] = true;
+            visited[current.Row, current.Col] = true;
+            var currentCenter = grid.CellCenter(current.Col, current.Row);
 
-            for (int k = 0; k < 8; k++)
+            for (int direction = 0; direction < 8; direction++)
             {
-                int nc = col + Dc[k];
-                int nr = row + Dr[k];
-                if (!grid.InBounds(nc, nr) || grid.IsBlocked(nc, nr))
+                var next = (Col: current.Col + Dc[direction], Row: current.Row + Dr[direction]);
+                if (!grid.InBounds(next.Col, next.Row) || grid.IsBlocked(next.Col, next.Row) ||
+                    visited[next.Row, next.Col])
                 {
                     continue;
                 }
 
-                bool isDiagonal = Dc[k] != 0 && Dr[k] != 0;
-                if (isDiagonal && (grid.IsBlocked(col + Dc[k], row) || grid.IsBlocked(col, row + Dr[k])))
+                bool diagonal = Dc[direction] != 0 && Dr[direction] != 0;
+                if (diagonal &&
+                    (grid.IsBlocked(current.Col + Dc[direction], current.Row) ||
+                     grid.IsBlocked(current.Col, current.Row + Dr[direction])))
                 {
-                    // Disallow cutting across a wall corner diagonally.
                     continue;
                 }
 
-                double step = isDiagonal ? diagonalStep : grid.CellSize;
-                double candidate = currentDist + step;
-                if (candidate < dist[nr, nc])
+                var nextCenter = grid.CellCenter(next.Col, next.Row);
+                double candidate = dist[current.Row, current.Col] + Distance(currentCenter, nextCenter);
+                (int Col, int Row)? candidatePredecessor = current;
+                DistanceRoot? candidateRoot = null;
+
+                if (predecessor[current.Row, current.Col] is { } parent)
                 {
-                    dist[nr, nc] = candidate;
-                    predecessor[nr, nc] = (col, row);
-                    queue.Enqueue((nc, nr), candidate);
+                    var parentCenter = grid.CellCenter(parent.Col, parent.Row);
+                    if (grid.HasLineOfSight(parentCenter, nextCenter))
+                    {
+                        double anyAngleCandidate =
+                            dist[parent.Row, parent.Col] + Distance(parentCenter, nextCenter);
+                        if (anyAngleCandidate <= candidate)
+                        {
+                            candidate = anyAngleCandidate;
+                            candidatePredecessor = parent;
+                        }
+                    }
                 }
+                else if (roots.TryGetValue(current, out var root) &&
+                         HasLineOfSightToRoot(grid, nextCenter, root))
+                {
+                    double anyAngleCandidate = Distance(nextCenter, root.Contact);
+                    if (anyAngleCandidate <= candidate)
+                    {
+                        candidate = anyAngleCandidate;
+                        candidatePredecessor = null;
+                        candidateRoot = root;
+                    }
+                }
+
+                if (candidate >= dist[next.Row, next.Col])
+                {
+                    continue;
+                }
+
+                dist[next.Row, next.Col] = candidate;
+                predecessor[next.Row, next.Col] = candidatePredecessor;
+                if (candidateRoot is { } directRoot)
+                {
+                    roots[next] = directRoot;
+                }
+                else
+                {
+                    roots.Remove(next);
+                }
+                queue.Enqueue(next, candidate);
             }
         }
 
         (int Col, int Row)? farthest = null;
         double maxDistance = 0;
         int unreachableCellCount = 0;
-        for (int r = 0; r < grid.Rows; r++)
+        for (int row = 0; row < grid.Rows; row++)
         {
-            for (int c = 0; c < grid.Cols; c++)
+            for (int col = 0; col < grid.Cols; col++)
             {
-                if (grid.IsBlocked(c, r))
+                if (grid.IsBlocked(col, row))
                 {
                     continue;
                 }
 
-                if (double.IsPositiveInfinity(dist[r, c]))
+                if (!double.IsFinite(dist[row, col]))
                 {
                     unreachableCellCount++;
                     continue;
                 }
 
-                if (farthest is null || dist[r, c] > maxDistance)
+                if (farthest is null || dist[row, col] > maxDistance)
                 {
-                    maxDistance = dist[r, c];
-                    farthest = (c, r);
+                    maxDistance = dist[row, col];
+                    farthest = (col, row);
                 }
             }
         }
 
-        var result = new DistanceMapResult(dist, farthest, maxDistance, unreachableCellCount, predecessor)
+        return new DistanceMapResult(dist, farthest, maxDistance, unreachableCellCount, predecessor)
         {
-            SourceContacts = sourceContacts,
+            Roots = roots,
         };
-        if (farthest is { } farthestCell &&
-            GetPath(grid, result, grid.CellCenter(farthestCell.Col, farthestCell.Row)) is { } farthestPath)
-        {
-            result = result with { MaxDistance = PathLength(farthestPath) };
-        }
-        return result;
     }
 
-    public static double? GetDistanceAt(
-        WalkabilityGrid grid,
-        DistanceMapResult result,
-        WorldPoint point)
-    {
-        if (!double.IsFinite(point.X) || !double.IsFinite(point.Y) ||
-            point.X < grid.Bounds.MinX || point.X > grid.Bounds.MaxX ||
-            point.Y < grid.Bounds.MinY || point.Y > grid.Bounds.MaxY)
-        {
-            return null;
-        }
-
-        var path = GetPath(grid, result, point);
-        return path is null ? null : PathLength(path);
-    }
-
-    public static IReadOnlyList<WorldPoint>? GetPath(
+    public static WalkingPath? FindPath(
         WalkabilityGrid grid,
         DistanceMapResult result,
         WorldPoint point)
@@ -183,50 +211,89 @@ public static class DistanceMapCalculator
             return null;
         }
 
-        var rawPath = new List<WorldPoint> { point };
-        AddIfDifferent(rawPath, grid.CellCenter(cell.Col, cell.Row));
-        while (true)
+        (int Col, int Row)? firstCell = cell;
+        DistanceRoot? directRoot = null;
+        var center = grid.CellCenter(cell.Col, cell.Row);
+        double bestDistance = grid.HasLineOfSight(point, center)
+            ? Distance(point, center) + result.Distances[cell.Row, cell.Col]
+            : double.PositiveInfinity;
+
+        if (result.Predecessor[cell.Row, cell.Col] is { } parent)
         {
-            if (result.Predecessor[cell.Row, cell.Col] is not { } previous)
+            var parentCenter = grid.CellCenter(parent.Col, parent.Row);
+            if (grid.HasLineOfSight(point, parentCenter))
             {
-                if (result.SourceContacts.TryGetValue(cell, out var contact))
+                double candidate =
+                    Distance(point, parentCenter) + result.Distances[parent.Row, parent.Col];
+                if (candidate <= bestDistance)
                 {
-                    AddIfDifferent(rawPath, contact);
+                    bestDistance = candidate;
+                    firstCell = parent;
                 }
-                return Simplify(grid, rawPath);
             }
-            cell = previous;
-            AddIfDifferent(rawPath, grid.CellCenter(cell.Col, cell.Row));
         }
+        else if (result.Roots.TryGetValue(cell, out var root) &&
+                 HasLineOfSightToRoot(grid, point, root))
+        {
+            double candidate = Distance(point, root.Contact);
+            if (candidate <= bestDistance)
+            {
+                bestDistance = candidate;
+                firstCell = null;
+                directRoot = root;
+            }
+        }
+
+        if (!double.IsFinite(bestDistance))
+        {
+            return null;
+        }
+
+        var points = new List<WorldPoint> { point };
+        if (directRoot is { } queryRoot)
+        {
+            AddIfDifferent(points, queryRoot.Contact);
+        }
+        else if (firstCell is { } pathCell)
+        {
+            while (true)
+            {
+                AddIfDifferent(points, grid.CellCenter(pathCell.Col, pathCell.Row));
+                if (result.Predecessor[pathCell.Row, pathCell.Col] is { } previous)
+                {
+                    pathCell = previous;
+                    continue;
+                }
+                if (!result.Roots.TryGetValue(pathCell, out var pathRoot))
+                {
+                    return null;
+                }
+                AddIfDifferent(points, pathRoot.Contact);
+                break;
+            }
+        }
+
+        return new WalkingPath(points, PathLength(points));
     }
 
-    private static IReadOnlyList<WorldPoint>? Simplify(
+    public static double? GetDistanceAt(
         WalkabilityGrid grid,
-        IReadOnlyList<WorldPoint> rawPath)
-    {
-        if (rawPath.Count < 2)
-        {
-            return rawPath;
-        }
+        DistanceMapResult result,
+        WorldPoint point) => FindPath(grid, result, point)?.Distance;
 
-        var path = new List<WorldPoint> { rawPath[0] };
-        int anchor = 0;
-        while (anchor < rawPath.Count - 1)
-        {
-            int next = rawPath.Count - 1;
-            while (next > anchor && !grid.HasLineOfSight(rawPath[anchor], rawPath[next]))
-            {
-                next--;
-            }
-            if (next == anchor)
-            {
-                return null;
-            }
-            path.Add(rawPath[next]);
-            anchor = next;
-        }
-        return path;
-    }
+    public static IReadOnlyList<WorldPoint>? GetPath(
+        WalkabilityGrid grid,
+        DistanceMapResult result,
+        WorldPoint point) => FindPath(grid, result, point)?.Points;
+
+    private static bool HasLineOfSightToRoot(
+        WalkabilityGrid grid,
+        WorldPoint point,
+        DistanceRoot root) =>
+        IsFinite(root.Contact) &&
+        (root.ExitSegment is { } exit
+            ? grid.HasLineOfSightToExit(point, root.Contact, exit)
+            : grid.HasLineOfSight(point, root.Contact));
 
     private static void AddIfDifferent(List<WorldPoint> points, WorldPoint point)
     {

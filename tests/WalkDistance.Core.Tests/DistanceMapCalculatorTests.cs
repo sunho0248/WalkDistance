@@ -182,9 +182,115 @@ public class DistanceMapCalculatorTests
         };
         var grid = WalkabilityGrid.Build(walls, cellSize: 1, marginCells: 0);
         var start = grid.CellCenter(0, 0);
+        var contactBeyondWall = grid.CellCenter(2, 0);
 
-        Assert.False(grid.HasLineOfSight(start, grid.CellCenter(2, 0)));
+        Assert.False(grid.HasLineOfSight(start, contactBeyondWall));
         Assert.False(grid.HasLineOfSight(start, grid.CellCenter(1, 1)));
+        Assert.False(grid.HasLineOfSightToExit(
+            start,
+            contactBeyondWall,
+            new Segment(contactBeyondWall, contactBeyondWall)));
+        var invalidSource = DistanceMapCalculator.Compute(
+            grid,
+            [new DistanceSource(0, 0, contactBeyondWall)]);
+        Assert.True(double.IsPositiveInfinity(invalidSource.Distances[0, 0]));
+    }
+
+    [Fact]
+    public void Compute_ChoosesSourceByTheSameAnyAngleMetricAsTheDisplayedPath()
+    {
+        var grid = GridFromBlocked(
+        [
+            (1, 0), (4, 0), (3, 1), (4, 1), (0, 2), (1, 2), (6, 2), (2, 3),
+            (1, 4), (6, 4), (2, 5), (5, 6), (7, 6), (9, 7), (2, 8), (3, 8),
+            (2, 9),
+        ]);
+        var source0 = (Col: 1, Row: 1);
+        var source1 = (Col: 8, Row: 1);
+        var query = grid.CellCenter(5, 4);
+        var fromSource0 = DistanceMapCalculator.FindPath(
+            grid,
+            DistanceMapCalculator.Compute(grid, [source0]),
+            query)!;
+        var fromSource1 = DistanceMapCalculator.FindPath(
+            grid,
+            DistanceMapCalculator.Compute(grid, [source1]),
+            query)!;
+
+        var combined = DistanceMapCalculator.Compute(grid, [source0, source1]);
+        var selected = DistanceMapCalculator.FindPath(grid, combined, query)!;
+
+        Assert.True(fromSource1.Distance < fromSource0.Distance);
+        Assert.Equal(grid.CellCenter(source1.Col, source1.Row), selected.Points[^1]);
+        Assert.Equal(fromSource1.Distance, selected.Distance, precision: 10);
+        Assert.Equal(selected.Distance, combined.Distances[4, 5], precision: 10);
+    }
+
+    [Fact]
+    public void Compute_FarthestCellAndMaximumUseEveryCellsAnyAnglePathMetric()
+    {
+        var grid = GridFromBlocked(
+        [
+            (8, 0), (0, 1), (2, 1), (6, 1), (8, 1), (2, 2), (4, 2), (9, 2),
+            (0, 3), (0, 4), (1, 4), (3, 4), (4, 4), (5, 4), (7, 4), (2, 5),
+            (3, 5), (0, 6), (4, 6), (9, 6), (5, 7), (6, 7), (8, 7), (3, 8),
+            (5, 9), (8, 9),
+        ]);
+        var result = DistanceMapCalculator.Compute(grid, [(Col: 1, Row: 1)]);
+        (int Col, int Row)? expectedFarthest = null;
+        double expectedMaximum = 0;
+
+        for (int row = 0; row < grid.Rows; row++)
+        {
+            for (int col = 0; col < grid.Cols; col++)
+            {
+                double distance = result.Distances[row, col];
+                if (grid.IsBlocked(col, row) || !double.IsFinite(distance))
+                {
+                    continue;
+                }
+
+                var path = DistanceMapCalculator.FindPath(grid, result, grid.CellCenter(col, row));
+                Assert.NotNull(path);
+                Assert.Equal(path!.Distance, distance, precision: 10);
+                if (expectedFarthest is null || path.Distance > expectedMaximum)
+                {
+                    expectedFarthest = (col, row);
+                    expectedMaximum = path.Distance;
+                }
+            }
+        }
+
+        Assert.Equal(expectedFarthest, result.FarthestCell);
+        Assert.Equal(expectedMaximum, result.MaxDistance, precision: 10);
+        Assert.All(
+            result.Distances.Cast<double>().Where(double.IsFinite),
+            distance => Assert.True(distance <= result.MaxDistance));
+    }
+
+    [Fact]
+    public void WallLineExit_ConnectsBothSidesAndKeepsTheExitContact()
+    {
+        var grid = WalkabilityGrid.Build(Rectangle(0, 0, 10, 10), cellSize: 0.5, marginCells: 1);
+        var exit = new Segment(new WorldPoint(4, 0), new WorldPoint(6, 0));
+        var sources = grid.WalkableSourcesNearSegment(exit, grid.CellSize);
+        int wallRow = grid.WorldToCell(new WorldPoint(5, 0)).Row;
+
+        Assert.Contains(sources, source => source.Row < wallRow);
+        Assert.Contains(sources, source => source.Row > wallRow);
+        var result = DistanceMapCalculator.Compute(grid, sources);
+
+        foreach (var query in new[] { new WorldPoint(5, 5), new WorldPoint(5, -0.25) })
+        {
+            var path = DistanceMapCalculator.FindPath(grid, result, query);
+
+            Assert.NotNull(path);
+            var contact = path!.Points[^1];
+            Assert.Equal(0, contact.Y, precision: 10);
+            Assert.InRange(contact.X, exit.Start.X, exit.End.X);
+            Assert.True(grid.HasLineOfSightToExit(path.Points[^2], contact, exit));
+            Assert.False(grid.HasLineOfSight(path.Points[^2], contact));
+        }
     }
 
     [Fact]
@@ -222,6 +328,18 @@ public class DistanceMapCalculatorTests
             new(new WorldPoint(maxX, maxY), new WorldPoint(minX, maxY)),
             new(new WorldPoint(minX, maxY), new WorldPoint(minX, minY)),
         ];
+    }
+
+    private static WalkabilityGrid GridFromBlocked(IReadOnlyList<(int Col, int Row)> blocked)
+    {
+        var walls = blocked
+            .Select(cell => new Segment(
+                new WorldPoint(cell.Col, cell.Row),
+                new WorldPoint(cell.Col, cell.Row)))
+            .ToList();
+        walls.Add(new Segment(new WorldPoint(0, 0), new WorldPoint(0, 0)));
+        walls.Add(new Segment(new WorldPoint(9, 9), new WorldPoint(9, 9)));
+        return WalkabilityGrid.Build(walls, cellSize: 1, marginCells: 0);
     }
 
     private static double PathLength(IReadOnlyList<WorldPoint> path) =>

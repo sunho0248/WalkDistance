@@ -55,7 +55,25 @@ public sealed class WalkabilityGrid
     /// Exact corner crossings also check both side cells, matching the diagonal
     /// corner-cut rule used by the path search.
     /// </summary>
-    public bool HasLineOfSight(WorldPoint start, WorldPoint end)
+    public bool HasLineOfSight(WorldPoint start, WorldPoint end) =>
+        HasLineOfSight(start, end, allowBlockedEndCell: false);
+
+    /// <summary>
+    /// Checks a route whose final point is on a designated exit. Only the cell
+    /// containing that final contact may be blocked, so an exit rasterized as
+    /// wall remains reachable without permitting travel through other walls.
+    /// </summary>
+    public bool HasLineOfSightToExit(WorldPoint start, WorldPoint contact, Segment exit)
+    {
+        double tolerance = Math.Max(1e-9, CellSize * 1e-9);
+        if (SquaredDistance(contact, ClosestPoint(exit, contact)) > tolerance * tolerance)
+        {
+            return false;
+        }
+        return HasLineOfSight(start, contact, allowBlockedEndCell: true);
+    }
+
+    private bool HasLineOfSight(WorldPoint start, WorldPoint end, bool allowBlockedEndCell)
     {
         if (!IsFinite(start) || !IsFinite(end) ||
             start.X < Bounds.MinX || start.X > Bounds.MaxX ||
@@ -98,7 +116,9 @@ public sealed class WalkabilityGrid
 
         bool IsClear(int candidateCol, int candidateRow)
         {
-            if (!InBounds(candidateCol, candidateRow) || IsBlocked(candidateCol, candidateRow))
+            if (!InBounds(candidateCol, candidateRow) ||
+                (IsBlocked(candidateCol, candidateRow) &&
+                 !(allowBlockedEndCell && candidateCol == endCol && candidateRow == endRow)))
             {
                 return false;
             }
@@ -260,21 +280,10 @@ public sealed class WalkabilityGrid
         {
             var center = CellCenter(col, row);
             var contact = ClosestPoint(segment, center);
-            if (HasLineOfSight(center, contact))
+            if (HasLineOfSightToExit(center, contact, segment))
             {
-                sources.Add(new DistanceSource(col, row, contact));
+                sources.Add(new DistanceSource(col, row, contact, segment));
             }
-        }
-
-        if (sources.Count == 0 && candidates.Count > 0)
-        {
-            var fallback = candidates.MinBy(cell => SquaredDistance(
-                CellCenter(cell.Col, cell.Row),
-                ClosestPoint(segment, CellCenter(cell.Col, cell.Row))));
-            sources.Add(new DistanceSource(
-                fallback.Col,
-                fallback.Row,
-                CellCenter(fallback.Col, fallback.Row)));
         }
         return sources;
     }
@@ -328,8 +337,12 @@ public sealed class WalkabilityGrid
         }
 
         var blocked = new bool[rows, cols];
-
-        var grid = new WalkabilityGrid(cellSize, padded, cols, rows, blocked);
+        var gridBounds = new Bounds(
+            padded.MinX,
+            padded.MinY,
+            padded.MinX + cols * cellSize,
+            padded.MinY + rows * cellSize);
+        var grid = new WalkabilityGrid(cellSize, gridBounds, cols, rows, blocked);
 
         foreach (var wall in walls)
         {
