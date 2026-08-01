@@ -41,7 +41,7 @@
         </ToolBarTray>
 
         <Border BorderBrush="Gray" BorderThickness="1" Background="White">
-            <Canvas x:Name="DrawingCanvas" ClipToBounds="True"
+            <Canvas x:Name="DrawingCanvas" ClipToBounds="True" Background="Transparent"
                     SizeChanged="OnCanvasSizeChanged"
                     MouseMove="OnCanvasMouseMove"
                     MouseLeftButtonDown="OnCanvasLeftClick"
