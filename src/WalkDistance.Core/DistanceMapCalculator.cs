@@ -4,7 +4,8 @@ public sealed record DistanceMapResult(
     double[,] Distances,
     (int Col, int Row)? FarthestCell,
     double MaxDistance,
-    int UnreachableCellCount);
+    int UnreachableCellCount,
+    (int Col, int Row)?[,] Predecessor);
 
 /// <summary>
 /// Multi-source Dijkstra over a walkability grid: computes, for every walkable
@@ -27,6 +28,7 @@ public static class DistanceMapCalculator
         }
 
         var visited = new bool[grid.Rows, grid.Cols];
+        var predecessor = new (int Col, int Row)?[grid.Rows, grid.Cols];
         var queue = new PriorityQueue<(int Col, int Row), double>();
 
         foreach (var (col, row) in sources)
@@ -75,6 +77,7 @@ public static class DistanceMapCalculator
                 if (candidate < dist[nr, nc])
                 {
                     dist[nr, nc] = candidate;
+                    predecessor[nr, nc] = (col, row);
                     queue.Enqueue((nc, nr), candidate);
                 }
             }
@@ -106,7 +109,7 @@ public static class DistanceMapCalculator
             }
         }
 
-        return new DistanceMapResult(dist, farthest, maxDistance, unreachableCellCount);
+        return new DistanceMapResult(dist, farthest, maxDistance, unreachableCellCount, predecessor);
     }
 
     public static double? GetDistanceAt(
@@ -124,5 +127,28 @@ public static class DistanceMapCalculator
         var (col, row) = grid.WorldToCell(point);
         double distance = result.Distances[row, col];
         return grid.IsBlocked(col, row) || !double.IsFinite(distance) ? null : distance;
+    }
+
+    public static IReadOnlyList<WorldPoint>? GetPath(
+        WalkabilityGrid grid,
+        DistanceMapResult result,
+        WorldPoint point)
+    {
+        if (GetDistanceAt(grid, result, point) is null)
+        {
+            return null;
+        }
+
+        var cell = grid.WorldToCell(point);
+        var path = new List<WorldPoint>();
+        while (true)
+        {
+            path.Add(grid.CellCenter(cell.Col, cell.Row));
+            if (result.Predecessor[cell.Row, cell.Col] is not { } previous)
+            {
+                return path;
+            }
+            cell = previous;
+        }
     }
 }
