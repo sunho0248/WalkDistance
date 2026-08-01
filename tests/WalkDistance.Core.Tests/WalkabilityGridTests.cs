@@ -83,7 +83,7 @@ public class WalkabilityGridTests
         var walls = Enumerable.Range(3, 5)
             .Select(y => new Segment(new WorldPoint(0, y), new WorldPoint(10, y)))
             .ToList();
-        var grid = WalkabilityGrid.Build(walls, cellSize: 1, marginCells: 0);
+        var grid = WalkabilityGrid.Build(walls, cellSize: 1, marginCells: 4);
         var point = new WorldPoint(5.2, 5.2);
 
         var cells = grid.WalkableCellsNearSegment(new Segment(point, point), grid.CellSize);

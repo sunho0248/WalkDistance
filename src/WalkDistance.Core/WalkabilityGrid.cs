@@ -86,6 +86,56 @@ public sealed class WalkabilityGrid
         return null;
     }
 
+    public IReadOnlyList<(int Col, int Row)> WalkableCellsNearSegment(
+        Segment segment,
+        double proximity)
+    {
+        if (!double.IsFinite(proximity) || proximity < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(proximity));
+        }
+
+        if (segment.Start == segment.End)
+        {
+            var legacyCell = NearestWalkableCell(segment.Start);
+            return legacyCell is { } cell ? [cell] : [];
+        }
+
+        double dx = segment.End.X - segment.Start.X;
+        double dy = segment.End.Y - segment.Start.Y;
+        double length = Math.Sqrt(dx * dx + dy * dy);
+        int steps = Math.Max(1, (int)Math.Ceiling(length / (CellSize / 2)));
+        int radiusCells = (int)Math.Ceiling(proximity / CellSize);
+        var cells = new HashSet<(int Col, int Row)>();
+
+        for (int step = 0; step <= steps; step++)
+        {
+            double t = (double)step / steps;
+            var (col, row) = WorldToCell(new WorldPoint(
+                segment.Start.X + dx * t,
+                segment.Start.Y + dy * t));
+
+            for (int dc = -radiusCells; dc <= radiusCells; dc++)
+            {
+                for (int dr = -radiusCells; dr <= radiusCells; dr++)
+                {
+                    int candidateCol = col + dc;
+                    int candidateRow = row + dr;
+                    if (InBounds(candidateCol, candidateRow) && !IsBlocked(candidateCol, candidateRow))
+                    {
+                        cells.Add((candidateCol, candidateRow));
+                    }
+                }
+            }
+        }
+
+        if (cells.Count == 0 && NearestWalkableCell(segment.Start) is { } fallback)
+        {
+            cells.Add(fallback);
+        }
+        return cells.ToList();
+    }
+
     /// <summary>
     /// Rasterizes wall segments into a blocked/free grid. Walls are sampled along
     /// their length at half a cell size to mark every cell they pass through.
