@@ -55,5 +55,62 @@ public class DistanceMapCalculatorTests
         var result = DistanceMapCalculator.Compute(grid, new[] { exit });
 
         Assert.True(double.IsPositiveInfinity(result.Distances[farRoomCell.Row, farRoomCell.Col]));
+        Assert.True(result.UnreachableCellCount > 0);
+        Assert.True(double.IsFinite(result.MaxDistance));
+    }
+
+    [Fact]
+    public void Compute_MultipleExitsUseTheNearestSource()
+    {
+        var walls = Rectangle(0, 0, 10, 4);
+        var grid = WalkabilityGrid.Build(walls, cellSize: 0.5, marginCells: 0);
+        var leftExit = grid.NearestWalkableCell(new WorldPoint(1, 2))!.Value;
+        var rightExit = grid.NearestWalkableCell(new WorldPoint(9, 2))!.Value;
+        var target = grid.WorldToCell(new WorldPoint(8, 2));
+
+        var fromLeft = DistanceMapCalculator.Compute(grid, new[] { leftExit });
+        var fromBoth = DistanceMapCalculator.Compute(grid, new[] { leftExit, rightExit });
+
+        Assert.True(fromBoth.Distances[target.Row, target.Col] < fromLeft.Distances[target.Row, target.Col]);
+    }
+
+    [Fact]
+    public void Compute_DoesNotCutBlockedDiagonalCorner()
+    {
+        var walls = new List<Segment>
+        {
+            new(new WorldPoint(1, 0), new WorldPoint(1, 0)),
+            new(new WorldPoint(0, 1), new WorldPoint(0, 1)),
+        };
+        var grid = WalkabilityGrid.Build(walls, cellSize: 1, marginCells: 0);
+
+        var result = DistanceMapCalculator.Compute(grid, new[] { (Col: 0, Row: 0) });
+
+        Assert.True(double.IsPositiveInfinity(result.Distances[1, 1]));
+    }
+
+    [Fact]
+    public void GetDistanceAt_ReturnsDistanceOrNullForUnreachablePoint()
+    {
+        var walls = new List<Segment>();
+        walls.AddRange(Rectangle(0, 0, 2, 2));
+        walls.AddRange(Rectangle(4, 0, 6, 2));
+        var grid = WalkabilityGrid.Build(walls, cellSize: 0.25, marginCells: 1);
+        var exit = grid.NearestWalkableCell(new WorldPoint(1, 1))!.Value;
+        var result = DistanceMapCalculator.Compute(grid, new[] { exit });
+
+        Assert.NotNull(DistanceMapCalculator.GetDistanceAt(grid, result, new WorldPoint(1.5, 1)));
+        Assert.Null(DistanceMapCalculator.GetDistanceAt(grid, result, new WorldPoint(5, 1)));
+    }
+
+    private static List<Segment> Rectangle(double minX, double minY, double maxX, double maxY)
+    {
+        return
+        [
+            new(new WorldPoint(minX, minY), new WorldPoint(maxX, minY)),
+            new(new WorldPoint(maxX, minY), new WorldPoint(maxX, maxY)),
+            new(new WorldPoint(maxX, maxY), new WorldPoint(minX, maxY)),
+            new(new WorldPoint(minX, maxY), new WorldPoint(minX, minY)),
+        ];
     }
 }

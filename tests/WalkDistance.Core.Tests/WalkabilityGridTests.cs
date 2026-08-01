@@ -35,4 +35,18 @@ public class WalkabilityGridTests
         Assert.NotNull(cell);
         Assert.False(grid.IsBlocked(cell!.Value.Col, cell.Value.Row));
     }
+
+    [Fact]
+    public void Build_RejectsExcessiveCellCountBeforeAllocation()
+    {
+        var walls = new List<Segment>
+        {
+            new(new WorldPoint(0, 0), new WorldPoint(100, 100)),
+        };
+
+        var exception = Assert.Throws<GridSizeLimitExceededException>(() =>
+            WalkabilityGrid.Build(walls, cellSize: 0.01, marginCells: 0, maxCellCount: 10_000));
+
+        Assert.True(exception.RequestedCellCount > exception.MaxCellCount);
+    }
 }

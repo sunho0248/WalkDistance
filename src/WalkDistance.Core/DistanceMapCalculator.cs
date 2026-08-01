@@ -3,7 +3,8 @@ namespace WalkDistance.Core;
 public sealed record DistanceMapResult(
     double[,] Distances,
     (int Col, int Row)? FarthestCell,
-    double MaxDistance);
+    double MaxDistance,
+    int UnreachableCellCount);
 
 /// <summary>
 /// Multi-source Dijkstra over a walkability grid: computes, for every walkable
@@ -81,16 +82,23 @@ public static class DistanceMapCalculator
 
         (int Col, int Row)? farthest = null;
         double maxDistance = 0;
+        int unreachableCellCount = 0;
         for (int r = 0; r < grid.Rows; r++)
         {
             for (int c = 0; c < grid.Cols; c++)
             {
-                if (grid.IsBlocked(c, r) || double.IsPositiveInfinity(dist[r, c]))
+                if (grid.IsBlocked(c, r))
                 {
                     continue;
                 }
 
-                if (dist[r, c] > maxDistance)
+                if (double.IsPositiveInfinity(dist[r, c]))
+                {
+                    unreachableCellCount++;
+                    continue;
+                }
+
+                if (farthest is null || dist[r, c] > maxDistance)
                 {
                     maxDistance = dist[r, c];
                     farthest = (c, r);
@@ -98,6 +106,23 @@ public static class DistanceMapCalculator
             }
         }
 
-        return new DistanceMapResult(dist, farthest, maxDistance);
+        return new DistanceMapResult(dist, farthest, maxDistance, unreachableCellCount);
+    }
+
+    public static double? GetDistanceAt(
+        WalkabilityGrid grid,
+        DistanceMapResult result,
+        WorldPoint point)
+    {
+        if (!double.IsFinite(point.X) || !double.IsFinite(point.Y) ||
+            point.X < grid.Bounds.MinX || point.X > grid.Bounds.MaxX ||
+            point.Y < grid.Bounds.MinY || point.Y > grid.Bounds.MaxY)
+        {
+            return null;
+        }
+
+        var (col, row) = grid.WorldToCell(point);
+        double distance = result.Distances[row, col];
+        return grid.IsBlocked(col, row) || !double.IsFinite(distance) ? null : distance;
     }
 }

@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:WalkDistance.App"
         mc:Ignorable="d"
-        Title="보행거리 계산 - MVP" Height="700" Width="1000">
+        Title="보행거리 계산" Height="700" Width="1000" MinHeight="500" MinWidth="760">
     <DockPanel>
         <Menu DockPanel.Dock="Top">
             <MenuItem Header="파일(_F)">
@@ -26,20 +26,25 @@
 
         <ToolBarTray DockPanel.Dock="Top">
             <ToolBar>
-                <ToggleButton x:Name="AddExitToggle" Content="출구 지정 모드" Width="90"
+                <ToggleButton x:Name="AddExitToggle" Content="출구 지정 모드" Width="100"
                               Checked="OnAddExitModeChanged" Unchecked="OnAddExitModeChanged"/>
-                <Button Content="출구 초기화" Click="OnClearExits"/>
+                <Button Content="출구 전체 초기화" Click="OnClearExits"/>
                 <Separator/>
                 <TextBlock Text="셀 크기(m):" VerticalAlignment="Center" Margin="4,0"/>
                 <TextBox x:Name="CellSizeBox" Width="50" Text="0.3" VerticalAlignment="Center"/>
                 <Separator/>
                 <Button x:Name="CalculateButton" Content="보행거리 계산" FontWeight="Bold" Click="OnCalculate"/>
+                <Separator/>
+                <TextBlock Text="우클릭: 마지막 출구 취소 · 계산 후 클릭: 거리 조회"
+                           Foreground="DimGray" VerticalAlignment="Center" Margin="4,0"/>
             </ToolBar>
         </ToolBarTray>
 
         <Border BorderBrush="Gray" BorderThickness="1" Background="White">
             <Canvas x:Name="DrawingCanvas" ClipToBounds="True"
-                    SizeChanged="OnCanvasSizeChanged" MouseLeftButtonDown="OnCanvasClick"/>
+                    SizeChanged="OnCanvasSizeChanged"
+                    MouseLeftButtonDown="OnCanvasLeftClick"
+                    MouseRightButtonDown="OnCanvasRightClick"/>
         </Border>
     </DockPanel>
 </Window>

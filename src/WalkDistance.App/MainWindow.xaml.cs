@@ -3,7 +3,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using Microsoft.Win32;
 using WalkDistance.Core;
@@ -12,13 +11,16 @@ namespace WalkDistance.App;
 
 public partial class MainWindow : Window
 {
-    private List<Segment> _walls = new();
-    private readonly List<WorldPoint> _exits = new();
+    private List<Segment> _walls = [];
+    private readonly List<WorldPoint> _exits = [];
     private WalkabilityGrid? _grid;
     private DistanceMapResult? _result;
     private string? _dxfPath;
+    private double _metersPerDrawingUnit = 1;
     private bool _addExitMode;
     private ViewTransform? _transform;
+    private WorldPoint? _queryPoint;
+    private double? _queryDistance;
 
     public MainWindow()
     {
@@ -35,12 +37,17 @@ public partial class MainWindow : Window
 
         try
         {
-            _walls = DxfLoader.LoadWalls(dialog.FileName).ToList();
+            var document = LoadDxfWithUnitSelection(dialog.FileName);
+            if (document is null)
+            {
+                return;
+            }
+
+            _walls = document.Walls.ToList();
+            _metersPerDrawingUnit = document.MetersPerDrawingUnit;
             _dxfPath = dialog.FileName;
-            _exits.Clear();
-            _grid = null;
-            _result = null;
-            StatusText.Text = $"{System.IO.Path.GetFileName(dialog.FileName)} 불러옴 (선분 {_walls.Count}개)";
+            ResetAnalysis(clearExits: true);
+            StatusText.Text = $"{System.IO.Path.GetFileName(dialog.FileName)} 불러옴 · 벽 선분 {_walls.Count:N0}개 · 1 도면 단위 = {_metersPerDrawingUnit:G6} m";
             Redraw();
         }
         catch (Exception ex)
@@ -49,28 +56,34 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnSaveProject(object sender, RoutedEventArgs e)
+    private DxfDocument? LoadDxfWithUnitSelection(string path)
     {
-        if (_dxfPath is null)
+        try
         {
-            MessageBox.Show(this, "먼저 DXF 파일을 불러오세요.", "알림");
-            return;
+            return DxfLoader.Load(path);
         }
-
-        var dialog = new SaveFileDialog { Filter = "프로젝트 파일|*.json" };
-        if (dialog.ShowDialog() != true)
+        catch (DxfUnitRequiredException)
         {
-            return;
+            double? scale = SelectUnitScale();
+            return scale is null ? null : DxfLoader.Load(path, scale);
         }
-
-        var cellSize = ParseCellSize();
-        ProjectFile.Save(dialog.FileName, new ProjectData(_dxfPath, cellSize ?? 0.3, _exits.ToList()));
-        StatusText.Text = $"프로젝트 저장됨: {System.IO.Path.GetFileName(dialog.FileName)}";
     }
 
-    private void OnOpenProject(object sender, RoutedEventArgs e)
+    private void OnSaveProject(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFileDialog { Filter = "프로젝트 파일|*.json" };
+        if (_walls.Count == 0)
+        {
+            MessageBox.Show(this, "먼저 DXF 또는 프로젝트를 불러오세요.", "알림");
+            return;
+        }
+
+        double? cellSize = ParseCellSize();
+        if (cellSize is null)
+        {
+            return;
+        }
+
+        var dialog = new SaveFileDialog { Filter = "보행거리 프로젝트|*.json" };
         if (dialog.ShowDialog() != true)
         {
             return;
@@ -78,20 +91,62 @@ public partial class MainWindow : Window
 
         try
         {
-            var data = ProjectFile.Load(dialog.FileName);
-            _walls = DxfLoader.LoadWalls(data.DxfPath).ToList();
+            ProjectFile.Save(dialog.FileName, new ProjectData(
+                Version: 2,
+                CellSize: cellSize.Value,
+                MetersPerDrawingUnit: _metersPerDrawingUnit,
+                Walls: _walls.ToList(),
+                Exits: _exits.ToList(),
+                DxfPath: _dxfPath));
+            StatusText.Text = $"프로젝트 저장됨: {System.IO.Path.GetFileName(dialog.FileName)} (DXF 없이 다시 열 수 있음)";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"프로젝트 저장 실패: {ex.Message}", "오류", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void OnOpenProject(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog { Filter = "보행거리 프로젝트|*.json|모든 파일|*.*" };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        try
+        {
+            var data = LoadProjectWithUnitSelection(dialog.FileName);
+            if (data is null)
+            {
+                return;
+            }
+
+            _walls = data.Walls.ToList();
             _dxfPath = data.DxfPath;
+            _metersPerDrawingUnit = data.MetersPerDrawingUnit;
             CellSizeBox.Text = data.CellSize.ToString(CultureInfo.InvariantCulture);
-            _exits.Clear();
+            ResetAnalysis(clearExits: true);
             _exits.AddRange(data.Exits);
-            _grid = null;
-            _result = null;
-            StatusText.Text = $"프로젝트 불러옴: {System.IO.Path.GetFileName(dialog.FileName)}";
+            StatusText.Text = $"프로젝트 v{data.Version} 불러옴: {System.IO.Path.GetFileName(dialog.FileName)} · 출구 {_exits.Count}개";
             Redraw();
         }
         catch (Exception ex)
         {
             MessageBox.Show(this, $"프로젝트 불러오기 실패: {ex.Message}", "오류", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private ProjectData? LoadProjectWithUnitSelection(string path)
+    {
+        try
+        {
+            return ProjectFile.Load(path);
+        }
+        catch (DxfUnitRequiredException)
+        {
+            double? scale = SelectUnitScale();
+            return scale is null ? null : ProjectFile.Load(path, scale);
         }
     }
 
@@ -101,26 +156,66 @@ public partial class MainWindow : Window
     {
         _addExitMode = AddExitToggle.IsChecked == true;
         DrawingCanvas.Cursor = _addExitMode ? Cursors.Cross : Cursors.Arrow;
+        if (_addExitMode)
+        {
+            StatusText.Text = "도면을 클릭해 출구를 추가하세요. 우클릭하면 마지막 출구를 취소합니다.";
+        }
     }
 
     private void OnClearExits(object sender, RoutedEventArgs e)
     {
-        _exits.Clear();
-        _result = null;
-        StatusText.Text = "출구가 초기화되었습니다.";
+        ResetAnalysis(clearExits: true);
+        StatusText.Text = "모든 출구가 초기화되었습니다.";
         Redraw();
     }
 
-    private void OnCanvasClick(object sender, MouseButtonEventArgs e)
+    private void OnCanvasLeftClick(object sender, MouseButtonEventArgs e)
     {
-        if (!_addExitMode || _walls.Count == 0 || _transform is null)
+        if (_walls.Count == 0 || _transform is null)
         {
             return;
         }
 
-        var screenPoint = e.GetPosition(DrawingCanvas);
-        _exits.Add(_transform.ToWorld(screenPoint));
+        var worldPoint = _transform.ToWorld(e.GetPosition(DrawingCanvas));
+        if (_addExitMode)
+        {
+            _exits.Add(worldPoint);
+            _grid = null;
+            _result = null;
+            _queryPoint = null;
+            _queryDistance = null;
+            StatusText.Text = $"출구 {_exits.Count}개 지정됨 · 우클릭: 마지막 출구 취소";
+            Redraw();
+            return;
+        }
+
+        if (_grid is null || _result is null)
+        {
+            return;
+        }
+
+        _queryPoint = worldPoint;
+        _queryDistance = DistanceMapCalculator.GetDistanceAt(_grid, _result, worldPoint);
+        StatusText.Text = _queryDistance is { } distance
+            ? $"선택 지점 → 가장 가까운 출구: {distance:F2} m"
+            : "선택 지점은 벽 위이거나 출구에서 도달할 수 없습니다.";
+        Redraw();
+    }
+
+    private void OnCanvasRightClick(object sender, MouseButtonEventArgs e)
+    {
+        if (_exits.Count == 0)
+        {
+            return;
+        }
+
+        _exits.RemoveAt(_exits.Count - 1);
+        _grid = null;
         _result = null;
+        _queryPoint = null;
+        _queryDistance = null;
+        StatusText.Text = $"마지막 출구를 취소했습니다. 남은 출구: {_exits.Count}개";
+        e.Handled = true;
         Redraw();
     }
 
@@ -128,7 +223,8 @@ public partial class MainWindow : Window
 
     private double? ParseCellSize()
     {
-        if (double.TryParse(CellSizeBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var cellSize) && cellSize > 0)
+        if (double.TryParse(CellSizeBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var cellSize) &&
+            double.IsFinite(cellSize) && cellSize > 0)
         {
             return cellSize;
         }
@@ -141,52 +237,135 @@ public partial class MainWindow : Window
     {
         if (_walls.Count == 0)
         {
-            MessageBox.Show(this, "먼저 DXF 파일을 불러오세요.", "알림");
+            MessageBox.Show(this, "먼저 DXF 또는 프로젝트를 불러오세요.", "알림");
             return;
         }
-
         if (_exits.Count == 0)
         {
             MessageBox.Show(this, "출구를 최소 1개 지정하세요.", "알림");
             return;
         }
 
-        var cellSize = ParseCellSize();
+        double? cellSize = ParseCellSize();
         if (cellSize is null)
         {
             return;
         }
 
-        _grid = WalkabilityGrid.Build(_walls, cellSize.Value);
-
-        var sources = new List<(int Col, int Row)>();
-        foreach (var exit in _exits)
+        try
         {
-            var cell = _grid.NearestWalkableCell(exit);
-            if (cell is not null)
+            _grid = WalkabilityGrid.Build(_walls, cellSize.Value);
+            var sources = _exits
+                .Select(exit => _grid.NearestWalkableCell(exit))
+                .Where(cell => cell is not null)
+                .Select(cell => cell!.Value)
+                .Distinct()
+                .ToList();
+            if (sources.Count == 0)
             {
-                sources.Add(cell.Value);
+                MessageBox.Show(this, "출구 위치 근처에서 통행 가능한 셀을 찾을 수 없습니다.", "알림");
+                return;
             }
-        }
 
-        if (sources.Count == 0)
+            _result = DistanceMapCalculator.Compute(_grid, sources);
+            AddExitToggle.IsChecked = false;
+            _queryPoint = null;
+            _queryDistance = null;
+            StatusText.Text = _result.FarthestCell is null
+                ? "도달 가능한 보행 영역이 없습니다."
+                : $"최대 보행거리: {_result.MaxDistance:F2} m · 계산 후 도면을 클릭하면 지점 거리를 조회합니다.";
+
+            if (_result.UnreachableCellCount > 0)
+            {
+                MessageBox.Show(this,
+                    $"출구에서 도달할 수 없는 보행 셀 {_result.UnreachableCellCount:N0}개는 최대 보행거리에서 제외했습니다.",
+                    "도달 불가능 영역",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                StatusText.Text += $" · 도달 불가 {_result.UnreachableCellCount:N0}셀 제외";
+            }
+
+            Redraw();
+        }
+        catch (GridSizeLimitExceededException ex)
         {
-            MessageBox.Show(this, "출구 위치 근처에서 통행 가능한 셀을 찾을 수 없습니다.", "알림");
-            return;
+            _grid = null;
+            _result = null;
+            MessageBox.Show(this,
+                $"격자가 너무 큽니다 ({ex.RequestedCellCount:N0}셀 / 한도 {ex.MaxCellCount:N0}셀). 셀 크기를 키워 다시 계산하세요.",
+                "격자 크기 초과",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            StatusText.Text = "계산 중단: 셀 크기를 키워 격자 셀 수를 줄이세요.";
+        }
+    }
+
+    private void ResetAnalysis(bool clearExits)
+    {
+        if (clearExits)
+        {
+            _exits.Clear();
+            AddExitToggle.IsChecked = false;
+        }
+        _grid = null;
+        _result = null;
+        _queryPoint = null;
+        _queryDistance = null;
+    }
+
+    private double? SelectUnitScale()
+    {
+        var choices = new[]
+        {
+            new UnitChoice("밀리미터 (mm)", 0.001),
+            new UnitChoice("센티미터 (cm)", 0.01),
+            new UnitChoice("미터 (m)", 1),
+            new UnitChoice("인치 (in)", 0.0254),
+            new UnitChoice("피트 (ft)", 0.3048),
+        };
+        var unitBox = new ComboBox
+        {
+            ItemsSource = choices,
+            DisplayMemberPath = nameof(UnitChoice.Label),
+            SelectedIndex = 0,
+            Margin = new Thickness(0, 10, 0, 14),
+            MinWidth = 220,
+        };
+        var okButton = new Button { Content = "확인", IsDefault = true, MinWidth = 75, Margin = new Thickness(4, 0, 0, 0) };
+        var cancelButton = new Button { Content = "취소", IsCancel = true, MinWidth = 75, Margin = new Thickness(4, 0, 0, 0) };
+        var buttonPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        buttonPanel.Children.Add(okButton);
+        buttonPanel.Children.Add(cancelButton);
+        var panel = new StackPanel { Margin = new Thickness(18) };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "DXF에 $INSUNITS가 없거나 unitless입니다. 원본 도면 좌표의 단위를 선택하세요.",
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 390,
+        });
+        panel.Children.Add(unitBox);
+        panel.Children.Add(buttonPanel);
+        var dialog = new Window
+        {
+            Title = "DXF 단위 선택",
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            SizeToContent = SizeToContent.WidthAndHeight,
+            Content = panel,
+        };
+        okButton.Click += (_, _) => dialog.DialogResult = true;
+        if (dialog.ShowDialog() != true)
+        {
+            return null;
         }
 
-        _result = DistanceMapCalculator.Compute(_grid, sources);
-        StatusText.Text = _result.FarthestCell is null
-            ? "도달 가능한 영역이 없습니다."
-            : $"최대 보행거리: {_result.MaxDistance:F2} m";
-
-        Redraw();
+        return ((UnitChoice)unitBox.SelectedItem).MetersPerUnit;
     }
 
     private void Redraw()
     {
         DrawingCanvas.Children.Clear();
-
         if (_walls.Count == 0 || DrawingCanvas.ActualWidth <= 0 || DrawingCanvas.ActualHeight <= 0)
         {
             _transform = null;
@@ -203,30 +382,37 @@ public partial class MainWindow : Window
 
         foreach (var wall in _walls)
         {
-            var p1 = _transform.ToScreen(wall.Start);
-            var p2 = _transform.ToScreen(wall.End);
+            var start = _transform.ToScreen(wall.Start);
+            var end = _transform.ToScreen(wall.End);
             DrawingCanvas.Children.Add(new Line
             {
-                X1 = p1.X,
-                Y1 = p1.Y,
-                X2 = p2.X,
-                Y2 = p2.Y,
+                X1 = start.X,
+                Y1 = start.Y,
+                X2 = end.X,
+                Y2 = end.Y,
                 Stroke = Brushes.Black,
-                StrokeThickness = 1.5
+                StrokeThickness = 1.5,
             });
         }
 
         foreach (var exit in _exits)
         {
-            var p = _transform.ToScreen(exit);
-            AddMarker(p, 6, Brushes.LimeGreen, "출구");
+            AddMarker(_transform.ToScreen(exit), 6, Brushes.LimeGreen, "출구");
         }
 
         if (_grid is not null && _result?.FarthestCell is { } farthest)
         {
-            var worldPoint = _grid.CellCenter(farthest.Col, farthest.Row);
-            var p = _transform.ToScreen(worldPoint);
-            AddMarker(p, 8, Brushes.Red, $"최대 보행거리 지점 ({_result.MaxDistance:F2} m)");
+            var point = _transform.ToScreen(_grid.CellCenter(farthest.Col, farthest.Row));
+            AddMarker(point, 8, Brushes.Red, $"최대 보행거리 지점 ({_result.MaxDistance:F2} m)");
+        }
+
+        if (_queryPoint is { } queryPoint)
+        {
+            string tooltip = _queryDistance is { } distance
+                ? $"선택 지점 ({distance:F2} m)"
+                : "도달 불가능 또는 벽";
+            AddMarker(_transform.ToScreen(queryPoint), 5,
+                _queryDistance is null ? Brushes.Gray : Brushes.DeepSkyBlue, tooltip);
         }
     }
 
@@ -239,13 +425,12 @@ public partial class MainWindow : Window
 
         var bitmap = HeatmapRenderer.Render(grid, result.Distances, result.MaxDistance);
         var topLeft = _transform.ToScreen(new WorldPoint(grid.Bounds.MinX, grid.Bounds.MaxY));
-
         var image = new Image
         {
             Source = bitmap,
             Width = grid.Bounds.Width * _transform.Scale,
             Height = grid.Bounds.Height * _transform.Scale,
-            Stretch = Stretch.Fill
+            Stretch = Stretch.Fill,
         };
         RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.NearestNeighbor);
         Canvas.SetLeft(image, topLeft.X);
@@ -262,17 +447,18 @@ public partial class MainWindow : Window
             Fill = brush,
             Stroke = Brushes.Black,
             StrokeThickness = 1,
-            ToolTip = tooltip
+            ToolTip = tooltip,
         };
         Canvas.SetLeft(ellipse, center.X - radius);
         Canvas.SetTop(ellipse, center.Y - radius);
         DrawingCanvas.Children.Add(ellipse);
     }
+
+    private sealed record UnitChoice(string Label, double MetersPerUnit);
 }
 
 /// <summary>
-/// Maps between DXF world coordinates (Y-up) and canvas screen coordinates (Y-down),
-/// scaling the drawing bounds to fit and center within the available canvas size.
+/// Maps DXF world coordinates (Y-up) to the WPF canvas (Y-down).
 /// </summary>
 public sealed class ViewTransform
 {
@@ -307,15 +493,14 @@ public sealed class ViewTransform
         double drawnHeight = height * scale;
         double offsetX = (canvasWidth - drawnWidth) / 2;
         double offsetY = (canvasHeight - drawnHeight) / 2;
-
         return new ViewTransform(scale, offsetX, offsetY, canvasHeight, bounds.MinX, bounds.MinY);
     }
 
-    public Point ToScreen(WorldPoint p) => new(
-        _offsetX + (p.X - _minX) * Scale,
-        _canvasHeight - _offsetY - (p.Y - _minY) * Scale);
+    public Point ToScreen(WorldPoint point) => new(
+        _offsetX + (point.X - _minX) * Scale,
+        _canvasHeight - _offsetY - (point.Y - _minY) * Scale);
 
-    public WorldPoint ToWorld(Point p) => new(
-        _minX + (p.X - _offsetX) / Scale,
-        _minY + (_canvasHeight - _offsetY - p.Y) / Scale);
+    public WorldPoint ToWorld(Point point) => new(
+        _minX + (point.X - _offsetX) / Scale,
+        _minY + (_canvasHeight - _offsetY - point.Y) / Scale);
 }

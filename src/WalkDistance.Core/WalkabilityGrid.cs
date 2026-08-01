@@ -1,10 +1,25 @@
 namespace WalkDistance.Core;
 
+public sealed class GridSizeLimitExceededException : InvalidOperationException
+{
+    public long RequestedCellCount { get; }
+    public int MaxCellCount { get; }
+
+    public GridSizeLimitExceededException(long requestedCellCount, int maxCellCount)
+        : base($"격자 셀 {requestedCellCount:N0}개가 허용 한도 {maxCellCount:N0}개를 초과합니다.")
+    {
+        RequestedCellCount = requestedCellCount;
+        MaxCellCount = maxCellCount;
+    }
+}
+
 /// <summary>
 /// Rasterized floor plan: each cell is either walkable (free) or blocked (wall).
 /// </summary>
 public sealed class WalkabilityGrid
 {
+    public const int DefaultMaxCellCount = 4_000_000;
+
     public double CellSize { get; }
     public Bounds Bounds { get; }
     public int Cols { get; }
@@ -77,11 +92,23 @@ public sealed class WalkabilityGrid
     /// ponytail: sampling, not exact segment-rectangle intersection; upgrade if
     /// thin walls at shallow angles start leaking through cells.
     /// </summary>
-    public static WalkabilityGrid Build(IReadOnlyList<Segment> walls, double cellSize, int marginCells = 2)
+    public static WalkabilityGrid Build(
+        IReadOnlyList<Segment> walls,
+        double cellSize,
+        int marginCells = 2,
+        int maxCellCount = DefaultMaxCellCount)
     {
-        if (cellSize <= 0)
+        if (!double.IsFinite(cellSize) || cellSize <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(cellSize), "Cell size must be positive.");
+        }
+        if (marginCells < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(marginCells));
+        }
+        if (maxCellCount <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxCellCount));
         }
 
         var bounds = Bounds.FromSegments(walls);
@@ -91,8 +118,22 @@ public sealed class WalkabilityGrid
             bounds.MaxX + marginCells * cellSize,
             bounds.MaxY + marginCells * cellSize);
 
-        int cols = Math.Max(1, (int)Math.Ceiling(padded.Width / cellSize) + 1);
-        int rows = Math.Max(1, (int)Math.Ceiling(padded.Height / cellSize) + 1);
+        double requestedCols = Math.Max(1, Math.Ceiling(padded.Width / cellSize) + 1);
+        double requestedRows = Math.Max(1, Math.Ceiling(padded.Height / cellSize) + 1);
+        if (!double.IsFinite(requestedCols) || !double.IsFinite(requestedRows) ||
+            requestedCols > int.MaxValue || requestedRows > int.MaxValue)
+        {
+            throw new GridSizeLimitExceededException(long.MaxValue, maxCellCount);
+        }
+
+        int cols = (int)requestedCols;
+        int rows = (int)requestedRows;
+        long requestedCellCount = (long)cols * rows;
+        if (requestedCellCount > maxCellCount)
+        {
+            throw new GridSizeLimitExceededException(requestedCellCount, maxCellCount);
+        }
+
         var blocked = new bool[rows, cols];
 
         var grid = new WalkabilityGrid(cellSize, padded, cols, rows, blocked);
