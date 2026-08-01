@@ -7,7 +7,7 @@ public sealed record ProjectData(
     double CellSize,
     double MetersPerDrawingUnit,
     List<Segment> Walls,
-    List<WorldPoint> Exits,
+    List<Segment> Exits,
     string? DxfPath = null);
 
 public static class ProjectFile
@@ -20,9 +20,9 @@ public static class ProjectFile
 
     public static void Save(string path, ProjectData data)
     {
-        var version2 = data with { Version = 2 };
-        ValidateVersion2(version2);
-        File.WriteAllText(path, JsonSerializer.Serialize(version2, Options));
+        var current = data with { Version = 3 };
+        ValidateCurrentVersion(current);
+        File.WriteAllText(path, JsonSerializer.Serialize(current, Options));
     }
 
     public static ProjectData Load(string path, double? unitlessMetersPerUnit = null)
@@ -31,12 +31,27 @@ public static class ProjectFile
         using var document = JsonDocument.Parse(json);
         int version = ReadVersion(document.RootElement);
 
-        if (version == 2)
+        if (version == 3)
         {
             var data = JsonSerializer.Deserialize<ProjectData>(json, Options)
                        ?? throw new InvalidDataException($"올바르지 않은 프로젝트 파일입니다: {path}");
-            ValidateVersion2(data);
+            ValidateCurrentVersion(data);
             return data;
+        }
+
+        if (version == 2)
+        {
+            var version2 = JsonSerializer.Deserialize<LegacyProjectDataV2>(json, Options)
+                           ?? throw new InvalidDataException($"올바르지 않은 프로젝트 파일입니다: {path}");
+            var migrated = new ProjectData(
+                Version: 3,
+                CellSize: version2.CellSize,
+                MetersPerDrawingUnit: version2.MetersPerDrawingUnit,
+                Walls: version2.Walls ?? [],
+                Exits: MigrateExits(version2.Exits ?? []),
+                DxfPath: version2.DxfPath);
+            ValidateCurrentVersion(migrated);
+            return migrated;
         }
 
         if (version != 1)
@@ -69,11 +84,11 @@ public static class ProjectFile
             point.X * dxf.MetersPerDrawingUnit,
             point.Y * dxf.MetersPerDrawingUnit)).ToList();
         return new ProjectData(
-            Version: 2,
+            Version: 3,
             CellSize: legacy.CellSize,
             MetersPerDrawingUnit: dxf.MetersPerDrawingUnit,
             Walls: dxf.Walls.ToList(),
-            Exits: exits,
+            Exits: MigrateExits(exits),
             DxfPath: dxfPath);
     }
 
@@ -94,11 +109,11 @@ public static class ProjectFile
         return 1;
     }
 
-    private static void ValidateVersion2(ProjectData data)
+    private static void ValidateCurrentVersion(ProjectData data)
     {
-        if (data.Version != 2)
+        if (data.Version != 3)
         {
-            throw new InvalidDataException("저장할 프로젝트 버전은 2여야 합니다.");
+            throw new InvalidDataException("저장할 프로젝트 버전은 3이어야 합니다.");
         }
         if (!double.IsFinite(data.CellSize) || data.CellSize <= 0)
         {
@@ -113,14 +128,26 @@ public static class ProjectFile
         {
             throw new InvalidDataException("프로젝트에 올바른 벽 geometry가 없습니다.");
         }
-        if (data.Exits is null || data.Exits.Any(point => !IsFinite(point)))
+        if (data.Exits is null || data.Exits.Any(segment =>
+                !IsFinite(segment.Start) || !IsFinite(segment.End)))
         {
             throw new InvalidDataException("프로젝트 출구 좌표가 올바르지 않습니다.");
         }
     }
 
+    private static List<Segment> MigrateExits(IEnumerable<WorldPoint> exits) =>
+        exits.Select(point => new Segment(point, point)).ToList();
+
     private static bool IsFinite(WorldPoint point) =>
         double.IsFinite(point.X) && double.IsFinite(point.Y);
 
     private sealed record LegacyProjectData(string? DxfPath, double CellSize, List<WorldPoint>? Exits);
+
+    private sealed record LegacyProjectDataV2(
+        int Version,
+        double CellSize,
+        double MetersPerDrawingUnit,
+        List<Segment>? Walls,
+        List<WorldPoint>? Exits,
+        string? DxfPath);
 }
