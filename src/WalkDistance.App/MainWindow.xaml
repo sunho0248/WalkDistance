@@ -31,7 +31,7 @@
                 <Button Content="출구 전체 초기화" Click="OnClearExits"/>
                 <Separator/>
                 <TextBlock Text="셀 크기(m):" VerticalAlignment="Center" Margin="4,0"/>
-                <TextBox x:Name="CellSizeBox" Width="50" Text="0.3" VerticalAlignment="Center"/>
+                <TextBox x:Name="CellSizeBox" Width="50" Text="0.1" VerticalAlignment="Center"/>
                 <Separator/>
                 <Button x:Name="CalculateButton" Content="보행거리 계산" FontWeight="Bold" Click="OnCalculate"/>
                 <Separator/>

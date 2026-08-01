@@ -47,10 +47,16 @@ dotnet run --project src/WalkDistance.App/WalkDistance.App.csproj
 ## 알고리즘
 
 벽 선분을 입력 셀 크기의 격자로 rasterize한 뒤 .NET의 우선순위 큐를 이용해
-다중 소스 Dijkstra를 수행한다. 각 출구 선분과 한 셀 이내의 통행 가능 셀을 중복
-없이 모두 거리 0의 시작점으로 넣고, 직교 이동은 셀 크기, 대각선 이동은
-`셀 크기 × √2`로 누적한다. 대각선 양옆 중 한 셀이라도 벽이면 이동을 금지해 코너
-컷을 막는다. predecessor를 함께 저장해 질의 셀에서 출구 source까지 경로를 복원한다.
+다중 소스 Dijkstra를 수행한다. 각 출구 선분과 한 셀 이내의 통행 가능 셀에는
+벽을 통과하지 않고 도달 가능한 실제 출구 선분상의 접점을 함께 저장한다. 직교 이동은
+셀 크기, 대각선 이동은 `셀 크기 × √2`로 누적하며, 대각선 양옆 중 한 셀이라도
+벽이면 이동을 금지해 코너 컷을 막는다.
+
+predecessor로 복원한 격자 경로는 실제 클릭 좌표에서 시작한다. 이후 보수적인
+supercover line-of-sight 검사로 벽 셀을 통과하거나 금지된 대각 코너를 자르지 않는
+범위에서 불필요한 셀 중심 꺾임을 제거하고, 가능한 경우 실제 출구 접점에서 끝나는
+연속 polyline으로 표시한다. 선택 지점 거리와 최대 거리 표시는 이 polyline 선분들의
+기하 길이 합계를 사용한다. 벽이 있으면 line-of-sight가 차단되어 실제 개구부를 지난다.
 
 출구에서 도달할 수 없는 자유 셀은 무한대로 유지하며 최대값과 가장 먼 지점 선정에서
 제외한다. UI는 제외된 셀 수를 알린다. 메모리 급증을 막기 위해 계산 전 격자를 최대
@@ -60,8 +66,9 @@ dotnet run --project src/WalkDistance.App/WalkDistance.App.csproj
 
 ```powershell
 dotnet test WalkDistance.sln
+dotnet restore src/WalkDistance.App/WalkDistance.App.csproj -r win-x64
 dotnet build src/WalkDistance.App/WalkDistance.App.csproj -c Release -r win-x64 --no-restore
-dotnet publish src/WalkDistance.App/WalkDistance.App.csproj -c Release -r win-x64 --self-contained true
+dotnet publish src/WalkDistance.App/WalkDistance.App.csproj -c Release -r win-x64 --self-contained true --no-restore -o dist/win-x64
 ```
 
 반복 가능한 수동 스모크 절차:
@@ -70,7 +77,7 @@ dotnet publish src/WalkDistance.App/WalkDistance.App.csproj -c Release -r win-x6
    뒤 마우스를 움직일 때 미리보기 선이 따라오는지 확인한다.
 2. 새 선분의 첫 점만 찍고 우클릭해 완료 출구는 유지한 채 pending 선만 사라지는지,
    다시 우클릭해 마지막 완료 선분이 삭제되는지 확인한다.
-3. 셀 크기 `0.3`으로 계산해 히트맵, 빨간 최장거리 지점과 출구까지의 점선 경로가
+3. 기본 셀 크기 `0.1`로 계산해 히트맵, 빨간 최장거리 지점과 출구까지의 점선 경로가
    나타나는지 확인한다.
 4. 출구 지정 모드가 꺼진 상태에서 도면의 서로 다른 지점을 차례로 클릭해 거리 문구와
    조회 점선이 중복되지 않고 새 경로로 갱신되는지 확인한다.
@@ -79,14 +86,16 @@ dotnet publish src/WalkDistance.App/WalkDistance.App.csproj -c Release -r win-x6
 6. 셀 크기를 매우 작게 입력해 4,000,000셀 제한 안내가 나타나는지 확인한다.
 
 자동 테스트는 단위 변환/단위 확인, 모든 지원 엔티티, v3 선분 round-trip, v1/v2
-마이그레이션, 출구 편집 상태, 선분 source dedupe, 경로 복원, 격자 상한, unreachable
-제외, 대각선 코너 컷을 다룬다.
+마이그레이션, 출구 편집 상태, 선분 source, 실제 좌표 기반 직선/우회 경로, 출구 접점,
+격자 상한, unreachable 제외, 벽 충돌과 대각선 코너 컷 방지를 다룬다.
 
 ## 제약
 
 - 바이너리 DXF, spline, block insert 확장, hatch 영역은 지원하지 않는다.
 - 벽은 선분을 반 셀 간격으로 샘플링해 막힌 셀로 변환하므로 세밀한 도면은 더 작은
   셀 크기가 필요하다.
+- 최단경로의 도달성과 source 선택은 격자 Dijkstra 해상도에 따르며, 표시 경로는 그
+  안전한 격자 경로를 line-of-sight로 단순화한 polyline이다.
 - 본 MVP는 선 중심을 벽으로 취급하며 벽 두께, 문 폭, 사람 반경은 모델링하지 않는다.
 
 ## 구조

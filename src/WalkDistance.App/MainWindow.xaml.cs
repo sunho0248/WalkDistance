@@ -212,10 +212,8 @@ public partial class MainWindow : Window
         }
 
         _queryPoint = worldPoint;
+        _queryPathPoints = DistanceMapCalculator.GetPath(_grid, _result, worldPoint);
         _queryDistance = DistanceMapCalculator.GetDistanceAt(_grid, _result, worldPoint);
-        _queryPathPoints = _queryDistance is null
-            ? null
-            : DistanceMapCalculator.GetPath(_grid, _result, worldPoint);
         StatusText.Text = _queryDistance is { } distance
             ? $"선택 지점 → 가장 가까운 출구: {distance:F2} m"
             : "선택 지점은 벽 위이거나 출구에서 도달할 수 없습니다.";
@@ -300,8 +298,7 @@ public partial class MainWindow : Window
             _farthestPathPoints = null;
             _queryPathPoints = null;
             var sources = _exitEditor.Segments
-                .SelectMany(exit => _grid.WalkableCellsNearSegment(exit, _grid.CellSize))
-                .Distinct()
+                .SelectMany(exit => _grid.WalkableSourcesNearSegment(exit, _grid.CellSize))
                 .ToList();
             if (sources.Count == 0)
             {
