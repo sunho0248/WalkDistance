@@ -12,7 +12,7 @@ namespace WalkDistance.App;
 public partial class MainWindow : Window
 {
     private List<Segment> _walls = [];
-    private readonly List<WorldPoint> _exits = [];
+    private readonly ExitLineEditor _exitEditor = new();
     private WalkabilityGrid? _grid;
     private DistanceMapResult? _result;
     private string? _dxfPath;
@@ -21,6 +21,9 @@ public partial class MainWindow : Window
     private ViewTransform? _transform;
     private WorldPoint? _queryPoint;
     private double? _queryDistance;
+    private IReadOnlyList<WorldPoint>? _farthestPathPoints;
+    private IReadOnlyList<WorldPoint>? _queryPathPoints;
+    private WorldPoint? _previewEnd;
 
     public MainWindow()
     {
@@ -92,11 +95,11 @@ public partial class MainWindow : Window
         try
         {
             ProjectFile.Save(dialog.FileName, new ProjectData(
-                Version: 2,
+                Version: 3,
                 CellSize: cellSize.Value,
                 MetersPerDrawingUnit: _metersPerDrawingUnit,
                 Walls: _walls.ToList(),
-                Exits: _exits.ToList(),
+                Exits: _exitEditor.Segments.ToList(),
                 DxfPath: _dxfPath));
             StatusText.Text = $"프로젝트 저장됨: {System.IO.Path.GetFileName(dialog.FileName)} (DXF 없이 다시 열 수 있음)";
         }
@@ -127,8 +130,8 @@ public partial class MainWindow : Window
             _metersPerDrawingUnit = data.MetersPerDrawingUnit;
             CellSizeBox.Text = data.CellSize.ToString(CultureInfo.InvariantCulture);
             ResetAnalysis(clearExits: true);
-            _exits.AddRange(data.Exits);
-            StatusText.Text = $"프로젝트 v{data.Version} 불러옴: {System.IO.Path.GetFileName(dialog.FileName)} · 출구 {_exits.Count}개";
+            _exitEditor.LoadSegments(data.Exits);
+            StatusText.Text = $"프로젝트 v{data.Version} 불러옴: {System.IO.Path.GetFileName(dialog.FileName)} · 출구 {_exitEditor.Segments.Count}개";
             Redraw();
         }
         catch (Exception ex)
@@ -158,7 +161,16 @@ public partial class MainWindow : Window
         DrawingCanvas.Cursor = _addExitMode ? Cursors.Cross : Cursors.Arrow;
         if (_addExitMode)
         {
-            StatusText.Text = "도면을 클릭해 출구를 추가하세요. 우클릭하면 마지막 출구를 취소합니다.";
+            StatusText.Text = "도면을 두 번 클릭해 출구 선분을 지정하세요. 우클릭: 그리기 취소/마지막 출구 삭제";
+            return;
+        }
+
+        if (_exitEditor.PendingStart is not null)
+        {
+            _exitEditor.HandleRightClick();
+            _previewEnd = null;
+            StatusText.Text = "출구 선분 그리기가 취소되었습니다.";
+            Redraw();
         }
     }
 
@@ -179,12 +191,17 @@ public partial class MainWindow : Window
         var worldPoint = _transform.ToWorld(e.GetPosition(DrawingCanvas));
         if (_addExitMode)
         {
-            _exits.Add(worldPoint);
-            _grid = null;
-            _result = null;
-            _queryPoint = null;
-            _queryDistance = null;
-            StatusText.Text = $"출구 {_exits.Count}개 지정됨 · 우클릭: 마지막 출구 취소";
+            if (_exitEditor.HandleLeftClick(worldPoint))
+            {
+                _previewEnd = null;
+                InvalidateAnalysis();
+                StatusText.Text = $"출구 {_exitEditor.Segments.Count}개 지정됨 · 우클릭: 마지막 출구 삭제";
+            }
+            else
+            {
+                _previewEnd = worldPoint;
+                StatusText.Text = "출구 시작점 지정됨 · 끝점을 클릭하세요. 우클릭: 그리기 취소";
+            }
             Redraw();
             return;
         }
@@ -196,6 +213,9 @@ public partial class MainWindow : Window
 
         _queryPoint = worldPoint;
         _queryDistance = DistanceMapCalculator.GetDistanceAt(_grid, _result, worldPoint);
+        _queryPathPoints = _queryDistance is null
+            ? null
+            : DistanceMapCalculator.GetPath(_grid, _result, worldPoint);
         StatusText.Text = _queryDistance is { } distance
             ? $"선택 지점 → 가장 가까운 출구: {distance:F2} m"
             : "선택 지점은 벽 위이거나 출구에서 도달할 수 없습니다.";
@@ -204,18 +224,39 @@ public partial class MainWindow : Window
 
     private void OnCanvasRightClick(object sender, MouseButtonEventArgs e)
     {
-        if (_exits.Count == 0)
+        if (!_addExitMode)
         {
             return;
         }
 
-        _exits.RemoveAt(_exits.Count - 1);
-        _grid = null;
-        _result = null;
-        _queryPoint = null;
-        _queryDistance = null;
-        StatusText.Text = $"마지막 출구를 취소했습니다. 남은 출구: {_exits.Count}개";
         e.Handled = true;
+        int previousCount = _exitEditor.Segments.Count;
+        bool cancelledPending = _exitEditor.HandleRightClick();
+        _previewEnd = null;
+        if (cancelledPending)
+        {
+            StatusText.Text = "출구 선분 그리기를 취소했습니다.";
+        }
+        else if (_exitEditor.Segments.Count < previousCount)
+        {
+            InvalidateAnalysis();
+            StatusText.Text = $"마지막 출구를 삭제했습니다. 남은 출구: {_exitEditor.Segments.Count}개";
+        }
+        else
+        {
+            StatusText.Text = "삭제할 출구가 없습니다.";
+        }
+        Redraw();
+    }
+
+    private void OnCanvasMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_addExitMode || _exitEditor.PendingStart is null || _transform is null)
+        {
+            return;
+        }
+
+        _previewEnd = _transform.ToWorld(e.GetPosition(DrawingCanvas));
         Redraw();
     }
 
@@ -240,7 +281,7 @@ public partial class MainWindow : Window
             MessageBox.Show(this, "먼저 DXF 또는 프로젝트를 불러오세요.", "알림");
             return;
         }
-        if (_exits.Count == 0)
+        if (_exitEditor.Segments.Count == 0)
         {
             MessageBox.Show(this, "출구를 최소 1개 지정하세요.", "알림");
             return;
@@ -255,10 +296,11 @@ public partial class MainWindow : Window
         try
         {
             _grid = WalkabilityGrid.Build(_walls, cellSize.Value);
-            var sources = _exits
-                .Select(exit => _grid.NearestWalkableCell(exit))
-                .Where(cell => cell is not null)
-                .Select(cell => cell!.Value)
+            _result = null;
+            _farthestPathPoints = null;
+            _queryPathPoints = null;
+            var sources = _exitEditor.Segments
+                .SelectMany(exit => _grid.WalkableCellsNearSegment(exit, _grid.CellSize))
                 .Distinct()
                 .ToList();
             if (sources.Count == 0)
@@ -268,12 +310,16 @@ public partial class MainWindow : Window
             }
 
             _result = DistanceMapCalculator.Compute(_grid, sources);
+            _farthestPathPoints = _result.FarthestCell is { } farthest
+                ? DistanceMapCalculator.GetPath(_grid, _result, _grid.CellCenter(farthest.Col, farthest.Row))
+                : null;
             AddExitToggle.IsChecked = false;
             _queryPoint = null;
             _queryDistance = null;
+            _queryPathPoints = null;
             StatusText.Text = _result.FarthestCell is null
                 ? "도달 가능한 보행 영역이 없습니다."
-                : $"최대 보행거리: {_result.MaxDistance:F2} m · 계산 후 도면을 클릭하면 지점 거리를 조회합니다.";
+                : $"최대 보행거리: {_result.MaxDistance:F2} m · 계산 후 도면을 클릭하면 해당 최단경로를 표시합니다.";
 
             if (_result.UnreachableCellCount > 0)
             {
@@ -291,6 +337,8 @@ public partial class MainWindow : Window
         {
             _grid = null;
             _result = null;
+            _farthestPathPoints = null;
+            _queryPathPoints = null;
             MessageBox.Show(this,
                 $"격자가 너무 큽니다 ({ex.RequestedCellCount:N0}셀 / 한도 {ex.MaxCellCount:N0}셀). 셀 크기를 키워 다시 계산하세요.",
                 "격자 크기 초과",
@@ -304,13 +352,21 @@ public partial class MainWindow : Window
     {
         if (clearExits)
         {
-            _exits.Clear();
+            _exitEditor.Clear();
+            _previewEnd = null;
             AddExitToggle.IsChecked = false;
         }
+        InvalidateAnalysis();
+    }
+
+    private void InvalidateAnalysis()
+    {
         _grid = null;
         _result = null;
         _queryPoint = null;
         _queryDistance = null;
+        _farthestPathPoints = null;
+        _queryPathPoints = null;
     }
 
     private double? SelectUnitScale()
@@ -395,10 +451,35 @@ public partial class MainWindow : Window
             });
         }
 
-        foreach (var exit in _exits)
+        foreach (var exit in _exitEditor.Segments)
         {
-            AddMarker(_transform.ToScreen(exit), 6, Brushes.LimeGreen, "출구");
+            var start = _transform.ToScreen(exit.Start);
+            var end = _transform.ToScreen(exit.End);
+            DrawingCanvas.Children.Add(new Line
+            {
+                X1 = start.X,
+                Y1 = start.Y,
+                X2 = end.X,
+                Y2 = end.Y,
+                Stroke = Brushes.LimeGreen,
+                StrokeThickness = 3,
+                ToolTip = "출구 선분",
+            });
+            AddMarker(start, 4, Brushes.LimeGreen, "출구 시작점");
+            AddMarker(end, 4, Brushes.LimeGreen, "출구 끝점");
         }
+
+        if (_exitEditor.PendingStart is { } pendingStart)
+        {
+            AddMarker(_transform.ToScreen(pendingStart), 4, Brushes.LightGreen, "출구 시작점 (지정 중)");
+            if (_previewEnd is { } previewEnd)
+            {
+                AddPath([pendingStart, previewEnd], Brushes.LightGreen, 2);
+            }
+        }
+
+        AddPath(_farthestPathPoints, Brushes.OrangeRed, 2.5);
+        AddPath(_queryPathPoints, Brushes.DeepSkyBlue, 2.5);
 
         if (_grid is not null && _result?.FarthestCell is { } farthest)
         {
@@ -452,6 +533,22 @@ public partial class MainWindow : Window
         Canvas.SetLeft(ellipse, center.X - radius);
         Canvas.SetTop(ellipse, center.Y - radius);
         DrawingCanvas.Children.Add(ellipse);
+    }
+
+    private void AddPath(IReadOnlyList<WorldPoint>? points, Brush brush, double thickness)
+    {
+        if (_transform is null || points is null || points.Count < 2)
+        {
+            return;
+        }
+
+        DrawingCanvas.Children.Add(new Polyline
+        {
+            Points = new PointCollection(points.Select(_transform.ToScreen)),
+            Stroke = brush,
+            StrokeThickness = thickness,
+            StrokeDashArray = new DoubleCollection { 4, 3 },
+        });
     }
 
     private sealed record UnitChoice(string Label, double MetersPerUnit);

@@ -35,7 +35,7 @@
                 <Separator/>
                 <Button x:Name="CalculateButton" Content="보행거리 계산" FontWeight="Bold" Click="OnCalculate"/>
                 <Separator/>
-                <TextBlock Text="우클릭: 마지막 출구 취소 · 계산 후 클릭: 거리 조회"
+                <TextBlock Text="출구 모드: 두 번 클릭해 선분 · 우클릭: 취소/삭제 · 계산 후 클릭: 경로 조회"
                            Foreground="DimGray" VerticalAlignment="Center" Margin="4,0"/>
             </ToolBar>
         </ToolBarTray>
@@ -43,6 +43,7 @@
         <Border BorderBrush="Gray" BorderThickness="1" Background="White">
             <Canvas x:Name="DrawingCanvas" ClipToBounds="True"
                     SizeChanged="OnCanvasSizeChanged"
+                    MouseMove="OnCanvasMouseMove"
                     MouseLeftButtonDown="OnCanvasLeftClick"
                     MouseRightButtonDown="OnCanvasRightClick"/>
         </Border>
