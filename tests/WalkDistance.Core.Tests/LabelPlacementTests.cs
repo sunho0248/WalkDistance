@@ -4,6 +4,24 @@ namespace WalkDistance.Core.Tests;
 
 public class LabelPlacementTests
 {
+    [Fact]
+    public void HalfLengthPoint_UsesPolylineLengthRatherThanPointCount()
+    {
+        var point = LabelPlacement.HalfLengthPoint(
+            [new WorldPoint(0, 0), new WorldPoint(2, 0), new WorldPoint(2, 6)]);
+
+        Assert.Equal(new WorldPoint(2, 2), point);
+    }
+
+    [Fact]
+    public void HalfLengthPoint_IgnoresZeroLengthSegments()
+    {
+        var point = LabelPlacement.HalfLengthPoint(
+            [new WorldPoint(1, 1), new WorldPoint(1, 1), new WorldPoint(5, 1), new WorldPoint(5, 1)]);
+
+        Assert.Equal(new WorldPoint(3, 1), point);
+    }
+
     [Theory]
     [InlineData(-20, 40, 4, 40)]
     [InlineData(190, 40, 156, 40)]

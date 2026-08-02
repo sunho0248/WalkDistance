@@ -685,6 +685,8 @@ public partial class MainWindow : Window
         {
             AddPath(_farthestPathPoints, Brushes.OrangeRed, 2.5);
             AddPath(_queryPathPoints, Brushes.DeepSkyBlue, 2.5);
+            var farthestLabelPosition = AddPathLabel(_farthestPathPoints, _result?.MaxDistance, Brushes.OrangeRed);
+            AddPathLabel(_queryPathPoints, _queryDistance, Brushes.DeepSkyBlue, farthestLabelPosition);
         }
 
         if (_grid is not null && _result?.FarthestCell is { } farthest)
@@ -820,6 +822,52 @@ public partial class MainWindow : Window
             StrokeThickness = thickness,
             StrokeDashArray = new DoubleCollection { 4, 3 },
         });
+    }
+
+    private Point? AddPathLabel(
+        IReadOnlyList<WorldPoint>? points, double? distance, Brush brush, Point? occupied = null)
+    {
+        if (_transform is null || points is null || points.Count < 2 ||
+            distance is not { } value || !double.IsFinite(value) ||
+            points.Any(point => !double.IsFinite(point.X) || !double.IsFinite(point.Y)))
+            return null;
+
+        var anchor = _transform.ToScreen(LabelPlacement.HalfLengthPoint(points));
+        var label = new TextBlock
+        {
+            Text = $"{value.ToString("F2", CultureInfo.InvariantCulture)} m",
+            Foreground = brush,
+            Background = Brushes.White,
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            Padding = new Thickness(3, 1, 3, 1),
+        };
+        label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+
+        Point Position(double yOffset)
+        {
+            var position = LabelPlacement.ClampToCanvas(
+                new WorldPoint(anchor.X + 4, anchor.Y + 4 + yOffset),
+                label.DesiredSize.Width,
+                label.DesiredSize.Height,
+                DrawingCanvas.ActualWidth,
+                DrawingCanvas.ActualHeight,
+                padding: 4);
+            return new Point(position.X, position.Y);
+        }
+
+        var labelPosition = Position(0);
+        if (occupied is { } other && (labelPosition - other).Length < 8)
+        {
+            labelPosition = Position(label.DesiredSize.Height + 4);
+            if ((labelPosition - other).Length < 8)
+                labelPosition = Position(-label.DesiredSize.Height - 4);
+        }
+
+        Canvas.SetLeft(label, labelPosition.X);
+        Canvas.SetTop(label, labelPosition.Y);
+        DrawingCanvas.Children.Add(label);
+        return labelPosition;
     }
 
     private sealed record UnitChoice(string Label, double MetersPerUnit);

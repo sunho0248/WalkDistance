@@ -47,6 +47,18 @@ public class AppSourceTests
     }
 
     [Fact]
+    public void MainWindow_RedrawPassesComputedDistancesToPathLabelsGatedWithPaths()
+    {
+        string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
+        string pathOverlay = Slice(redraw, "if (showPaths)", "if (_grid is not null");
+
+        Assert.Contains("AddPathLabel(_farthestPathPoints, _result?.MaxDistance, Brushes.OrangeRed", pathOverlay);
+        Assert.Contains("AddPathLabel(_queryPathPoints, _queryDistance, Brushes.DeepSkyBlue", pathOverlay);
+        Assert.Equal(2, pathOverlay.Split("AddPathLabel(").Length - 1);
+        Assert.Equal(2, redraw.Split("AddPathLabel(").Length - 1);
+    }
+
+    [Fact]
     public void MainWindow_ThresholdEditsValidateImmediatelyButApplyOnCommit()
     {
         string xaml = ReadAppFile("MainWindow.xaml");
