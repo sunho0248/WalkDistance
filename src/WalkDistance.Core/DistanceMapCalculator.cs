@@ -102,7 +102,7 @@ public static class DistanceMapCalculator
         {
             for (int col = 0; col < grid.Cols; col++)
             {
-                if (grid.IsBlocked(col, row))
+                if (!grid.IsWalkable(col, row))
                 {
                     continue;
                 }
@@ -142,7 +142,7 @@ public static class DistanceMapCalculator
         foreach (var source in sources)
         {
             var cell = (source.Col, source.Row);
-            if (!grid.InBounds(cell.Col, cell.Row) || grid.IsBlocked(cell.Col, cell.Row))
+            if (!grid.IsWalkable(cell.Col, cell.Row))
             {
                 continue;
             }
@@ -176,7 +176,7 @@ public static class DistanceMapCalculator
             for (int direction = 0; direction < 8; direction++)
             {
                 var next = (Col: current.Col + Dc[direction], Row: current.Row + Dr[direction]);
-                if (!grid.InBounds(next.Col, next.Row) || grid.IsBlocked(next.Col, next.Row) ||
+                if (!grid.IsWalkable(next.Col, next.Row) ||
                     visited[next.Row, next.Col])
                 {
                     continue;
@@ -184,8 +184,8 @@ public static class DistanceMapCalculator
 
                 bool diagonal = Dc[direction] != 0 && Dr[direction] != 0;
                 if (diagonal &&
-                    (grid.IsBlocked(current.Col + Dc[direction], current.Row) ||
-                     grid.IsBlocked(current.Col, current.Row + Dr[direction])))
+                    (!grid.IsWalkable(current.Col + Dc[direction], current.Row) ||
+                     !grid.IsWalkable(current.Col, current.Row + Dr[direction])))
                 {
                     continue;
                 }
@@ -311,7 +311,7 @@ public static class DistanceMapCalculator
         }
 
         var cell = grid.WorldToCell(point);
-        if (grid.IsBlocked(cell.Col, cell.Row) ||
+        if (!grid.IsWalkable(cell.Col, cell.Row) ||
             !double.IsFinite(result.Distances[cell.Row, cell.Col]))
         {
             return null;

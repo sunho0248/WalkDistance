@@ -25,6 +25,7 @@ public sealed class WalkabilityGrid
     public int Cols { get; }
     public int Rows { get; }
     private readonly bool[,] _blocked;
+    private readonly bool[,] _exterior;
     private readonly Segment[] _walls;
 
     private WalkabilityGrid(
@@ -40,10 +41,23 @@ public sealed class WalkabilityGrid
         Cols = cols;
         Rows = rows;
         _blocked = blocked;
+        _exterior = new bool[rows, cols];
         _walls = walls;
     }
 
     public bool IsBlocked(int col, int row) => _blocked[row, col];
+
+    public bool IsWalkable(int col, int row) =>
+        InBounds(col, row) && !_blocked[row, col] && !_exterior[row, col];
+
+    public bool IsWalkable((int Col, int Row) cell) => IsWalkable(cell.Col, cell.Row);
+
+    public bool Contains(WorldPoint point) =>
+        double.IsFinite(point.X) && double.IsFinite(point.Y) &&
+        point.X >= Bounds.MinX && point.X < Bounds.MaxX &&
+        point.Y >= Bounds.MinY && point.Y < Bounds.MaxY;
+
+    public int InteriorCellCount { get; private set; }
 
     public bool InBounds(int col, int row) => col >= 0 && col < Cols && row >= 0 && row < Rows;
 
@@ -142,19 +156,22 @@ public sealed class WalkabilityGrid
 
         bool IsClear(int candidateCol, int candidateRow)
         {
-            if (!InBounds(candidateCol, candidateRow) ||
-                (IsBlocked(candidateCol, candidateRow) &&
-                 !(allowBlockedEndCell && candidateCol == endCol && candidateRow == endRow)))
+            bool isAllowedEnd = allowBlockedEndCell && InBounds(candidateCol, candidateRow) &&
+                                candidateCol == endCol && candidateRow == endRow &&
+                                (IsBlocked(candidateCol, candidateRow) || IsWalkable(candidateCol, candidateRow));
+            if (!InBounds(candidateCol, candidateRow) || (!isAllowedEnd && !IsWalkable(candidateCol, candidateRow)))
             {
                 return false;
             }
             if (horizontalBoundary &&
-                (!InBounds(candidateCol, candidateRow - 1) || IsBlocked(candidateCol, candidateRow - 1)))
+                (!InBounds(candidateCol, candidateRow - 1) ||
+                 (!isAllowedEnd && !IsWalkable(candidateCol, candidateRow - 1))))
             {
                 return false;
             }
             if (verticalBoundary &&
-                (!InBounds(candidateCol - 1, candidateRow) || IsBlocked(candidateCol - 1, candidateRow)))
+                (!InBounds(candidateCol - 1, candidateRow) ||
+                 (!isAllowedEnd && !IsWalkable(candidateCol - 1, candidateRow))))
             {
                 return false;
             }
@@ -212,7 +229,7 @@ public sealed class WalkabilityGrid
     public (int Col, int Row)? NearestWalkableCell(WorldPoint p)
     {
         var (col, row) = WorldToCell(p);
-        if (!IsBlocked(col, row))
+        if (IsWalkable(col, row))
         {
             return (col, row);
         }
@@ -230,7 +247,7 @@ public sealed class WalkabilityGrid
                     }
 
                     int c = col + dc, r = row + dr;
-                    if (InBounds(c, r) && !IsBlocked(c, r))
+                    if (IsWalkable(c, r))
                     {
                         return (c, r);
                     }
@@ -276,7 +293,7 @@ public sealed class WalkabilityGrid
                 {
                     int candidateCol = col + dc;
                     int candidateRow = row + dr;
-                    if (InBounds(candidateCol, candidateRow) && !IsBlocked(candidateCol, candidateRow))
+                    if (IsWalkable(candidateCol, candidateRow))
                     {
                         cells.Add((candidateCol, candidateRow));
                     }
@@ -383,7 +400,54 @@ public sealed class WalkabilityGrid
             grid.RasterizeSegment(wall);
         }
 
+        grid.ClassifyExterior();
+
         return grid;
+    }
+
+    private void ClassifyExterior()
+    {
+        var queue = new Queue<(int Col, int Row)>();
+        void Enqueue(int col, int row)
+        {
+            if (InBounds(col, row) && !_blocked[row, col] && !_exterior[row, col])
+            {
+                _exterior[row, col] = true;
+                queue.Enqueue((col, row));
+            }
+        }
+
+        for (int col = 0; col < Cols; col++)
+        {
+            Enqueue(col, 0);
+            Enqueue(col, Rows - 1);
+        }
+        for (int row = 1; row < Rows - 1; row++)
+        {
+            Enqueue(0, row);
+            Enqueue(Cols - 1, row);
+        }
+
+        ReadOnlySpan<int> dc = [-1, 1, 0, 0];
+        ReadOnlySpan<int> dr = [0, 0, -1, 1];
+        while (queue.TryDequeue(out var cell))
+        {
+            for (int direction = 0; direction < 4; direction++)
+            {
+                Enqueue(cell.Col + dc[direction], cell.Row + dr[direction]);
+            }
+        }
+
+        int interior = 0;
+        for (int row = 0; row < Rows; row++)
+        for (int col = 0; col < Cols; col++)
+        {
+            if (IsWalkable(col, row))
+            {
+                interior++;
+            }
+        }
+        InteriorCellCount = interior;
     }
 
     private void RasterizeSegment(Segment wall)

@@ -239,6 +239,25 @@ public partial class MainWindow : Window
         }
 
         _queryPoint = worldPoint;
+        if (!_grid.Contains(worldPoint))
+        {
+            _queryDistance = null;
+            _queryPathPoints = null;
+            StatusText.Text = "선택 지점은 건물 외부입니다.";
+            Redraw();
+            return;
+        }
+        var queryCell = _grid.WorldToCell(worldPoint);
+        if (!_grid.IsWalkable(queryCell))
+        {
+            _queryDistance = null;
+            _queryPathPoints = null;
+            StatusText.Text = _grid.IsBlocked(queryCell.Col, queryCell.Row)
+                ? "선택 지점은 벽 위입니다."
+                : "선택 지점은 건물 외부입니다.";
+            Redraw();
+            return;
+        }
         var queryPath = DistanceMapCalculator.FindPath(_grid, _result, worldPoint);
         _queryPathPoints = queryPath?.Points;
         _queryDistance = queryPath?.Distance;
@@ -344,14 +363,31 @@ public partial class MainWindow : Window
             _grid = WalkabilityGrid.Build(_walls, cellSize.Value);
             _result = null;
             _farthestPathPoints = null;
+            _queryPoint = null;
+            _queryDistance = null;
             _queryPathPoints = null;
+            if (_grid.InteriorCellCount == 0)
+            {
+                _grid = null;
+                MessageBox.Show(this,
+                    "닫힌 건물 외곽선을 찾을 수 없습니다. 벽 선을 연결해 닫힌 공간을 만든 뒤 다시 계산하세요.",
+                    "닫힌 외곽선 필요",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                StatusText.Text = "계산 중단: 닫힌 건물 외곽선이 필요합니다.";
+                Redraw();
+                return;
+            }
             var sources = _exitEditor.Segments
                 .SelectMany((exit, exitGroupId) =>
                     _grid.WalkableSourcesNearSegment(exit, _grid.CellSize, exitGroupId))
                 .ToList();
             if (sources.Count == 0)
             {
-                MessageBox.Show(this, "출구 위치 근처에서 통행 가능한 셀을 찾을 수 없습니다.", "알림");
+                _grid = null;
+                MessageBox.Show(this, "건물 내부와 연결되는 사용 가능한 출구가 없습니다. 출구 위치를 확인하세요.", "알림");
+                StatusText.Text = "계산 중단: 건물 내부와 연결되는 사용 가능한 출구가 없습니다.";
+                Redraw();
                 return;
             }
 

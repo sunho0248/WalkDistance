@@ -5,6 +5,68 @@ namespace WalkDistance.Core.Tests;
 public class WalkabilityGridTests
 {
     [Fact]
+    public void Build_ClassifiesOnlyClosedInteriorAsWalkable()
+    {
+        var grid = WalkabilityGrid.Build(Rectangle(0, 0, 10, 10), cellSize: 0.5, marginCells: 2);
+
+        var inside = grid.WorldToCell(new WorldPoint(5, 5));
+        var outside = grid.WorldToCell(new WorldPoint(-0.5, 5));
+
+        Assert.True(grid.IsWalkable(inside.Col, inside.Row));
+        Assert.False(grid.IsWalkable(outside.Col, outside.Row));
+    }
+
+    [Fact]
+    public void Build_OpenOutlineHasNoWalkableInterior()
+    {
+        var walls = Rectangle(0, 0, 10, 10);
+        walls.RemoveAt(3);
+        var grid = WalkabilityGrid.Build(walls, cellSize: 0.5, marginCells: 2);
+
+        Assert.False(grid.IsWalkable(grid.WorldToCell(new WorldPoint(5, 5))));
+        Assert.Null(grid.NearestWalkableCell(new WorldPoint(5, 5)));
+    }
+
+    [Fact]
+    public void ExitSourcesExcludeExteriorSide()
+    {
+        var grid = WalkabilityGrid.Build(Rectangle(0, 0, 10, 10), cellSize: 0.25, marginCells: 2);
+        var exit = new Segment(new WorldPoint(4, 0), new WorldPoint(6, 0));
+
+        var sources = grid.WalkableSourcesNearSegment(exit, grid.CellSize);
+
+        Assert.NotEmpty(sources);
+        Assert.All(sources, source => Assert.True(grid.IsWalkable(source.Col, source.Row)));
+        Assert.All(sources, source => Assert.True(grid.CellCenter(source.Col, source.Row).Y > 0));
+    }
+
+    [Fact]
+    public void HasLineOfSight_ConcaveShortcutCannotCrossExterior()
+    {
+        Segment[] outline =
+        [
+            new(new(0, 0), new(6, 0)), new(new(6, 0), new(6, 6)),
+            new(new(6, 6), new(4, 6)), new(new(4, 6), new(4, 2)),
+            new(new(4, 2), new(2, 2)), new(new(2, 2), new(2, 6)),
+            new(new(2, 6), new(0, 6)), new(new(0, 6), new(0, 0)),
+        ];
+        var grid = WalkabilityGrid.Build(outline, cellSize: 0.25, marginCells: 2);
+
+        Assert.True(grid.IsWalkable(grid.WorldToCell(new WorldPoint(1, 5))));
+        Assert.True(grid.IsWalkable(grid.WorldToCell(new WorldPoint(5, 5))));
+        Assert.False(grid.HasLineOfSight(new WorldPoint(1, 5), new WorldPoint(5, 5)));
+    }
+
+    [Fact]
+    public void BoundaryClassification_AcceptsInsideAndRejectsJustOutside()
+    {
+        var grid = WalkabilityGrid.Build(Rectangle(0, 0, 10, 10), cellSize: 0.05, marginCells: 2);
+
+        Assert.True(grid.IsWalkable(grid.WorldToCell(new WorldPoint(5, 0.075))));
+        Assert.False(grid.IsWalkable(grid.WorldToCell(new WorldPoint(5, -0.025))));
+    }
+
+    [Fact]
     public void Build_MarksCellsAlongWallAsBlocked()
     {
         var walls = new List<Segment>
@@ -27,7 +89,7 @@ public class WalkabilityGridTests
     [Fact]
     public void NearestWalkableCell_StepsAwayFromBlockedStart()
     {
-        var walls = new List<Segment> { new(new WorldPoint(0, 0), new WorldPoint(10, 0)) };
+        var walls = Rectangle(0, 0, 10, 10);
         var grid = WalkabilityGrid.Build(walls, cellSize: 0.5, marginCells: 4);
 
         var cell = grid.NearestWalkableCell(new WorldPoint(5, 0));
@@ -80,9 +142,10 @@ public class WalkabilityGridTests
     [Fact]
     public void WalkableCellsNearSegment_EmbeddedZeroLengthFallsBackToLegacyNearestCell()
     {
-        var walls = Enumerable.Range(3, 5)
+        var walls = Rectangle(0, 0, 10, 10);
+        walls.AddRange(Enumerable.Range(3, 5)
             .Select(y => new Segment(new WorldPoint(0, y), new WorldPoint(10, y)))
-            .ToList();
+            .ToList());
         var grid = WalkabilityGrid.Build(walls, cellSize: 1, marginCells: 4);
         var point = new WorldPoint(5.2, 5.2);
 
@@ -161,7 +224,7 @@ public class WalkabilityGridTests
         var grid = WalkabilityGrid.Build(walls, cellSize: 0.1, marginCells: 1);
         var exit = new Segment(new WorldPoint(4, 0), new WorldPoint(6, 0));
 
-        Assert.True(grid.HasLineOfSightToExit(
+        Assert.False(grid.HasLineOfSightToExit(
             new WorldPoint(5.04, -0.05),
             new WorldPoint(5.04, 0),
             exit));

@@ -205,9 +205,9 @@ public class DistanceMapCalculatorTests
             (1, 4), (6, 4), (2, 5), (5, 6), (7, 6), (9, 7), (2, 8), (3, 8),
             (2, 9),
         ]);
-        var source0 = (Col: 1, Row: 1);
-        var source1 = (Col: 8, Row: 1);
-        var query = grid.CellCenter(5, 4);
+        var source0 = (Col: 2, Row: 2);
+        var source1 = (Col: 9, Row: 2);
+        var query = grid.CellCenter(6, 5);
         var fromSource0 = DistanceMapCalculator.FindPath(
             grid,
             DistanceMapCalculator.Compute(grid, [source0]),
@@ -223,7 +223,7 @@ public class DistanceMapCalculatorTests
         Assert.True(fromSource1.Distance < fromSource0.Distance);
         Assert.Equal(grid.CellCenter(source1.Col, source1.Row), selected.Points[^1]);
         Assert.Equal(fromSource1.Distance, selected.Distance, precision: 10);
-        Assert.Equal(selected.Distance, combined.Distances[4, 5], precision: 10);
+        Assert.Equal(selected.Distance, combined.Distances[5, 6], precision: 10);
     }
 
     [Fact]
@@ -234,9 +234,9 @@ public class DistanceMapCalculatorTests
             (0, 0), (9, 2), (4, 3), (7, 3), (9, 3), (1, 4), (8, 5),
             (1, 6), (4, 7), (7, 8), (0, 9), (2, 9), (9, 9),
         ]);
-        var sourceA = (Col: 1, Row: 1);
-        var sourceB = (Col: 8, Row: 1);
-        var query = grid.CellCenter(5, 7);
+        var sourceA = (Col: 2, Row: 2);
+        var sourceB = (Col: 9, Row: 2);
+        var query = grid.CellCenter(6, 8);
         var fromA = DistanceMapCalculator.FindPath(
             grid,
             DistanceMapCalculator.Compute(grid, [sourceA]),
@@ -259,7 +259,7 @@ public class DistanceMapCalculatorTests
 
             Assert.Equal(grid.CellCenter(sourceA.Col, sourceA.Row), selected.Points[^1]);
             Assert.Equal(fromA.Distance, selected.Distance, precision: 10);
-            Assert.Equal(fromA.Distance, combined.Distances[7, 5], precision: 10);
+            Assert.Equal(fromA.Distance, combined.Distances[8, 6], precision: 10);
         }
     }
 
@@ -307,7 +307,7 @@ public class DistanceMapCalculatorTests
             (3, 5), (0, 6), (4, 6), (9, 6), (5, 7), (6, 7), (8, 7), (3, 8),
             (5, 9), (8, 9),
         ]);
-        var result = DistanceMapCalculator.Compute(grid, [(Col: 1, Row: 1)]);
+        var result = DistanceMapCalculator.Compute(grid, [(Col: 2, Row: 2)]);
         (int Col, int Row)? expectedFarthest = null;
         double expectedMaximum = 0;
 
@@ -340,7 +340,7 @@ public class DistanceMapCalculatorTests
     }
 
     [Fact]
-    public void WallLineExit_ConnectsBothSidesAndKeepsTheExitContact()
+    public void WallLineExit_ConnectsInteriorSideAndKeepsTheExitContact()
     {
         var grid = WalkabilityGrid.Build(Rectangle(0, 0, 10, 10), cellSize: 0.5, marginCells: 1);
         var exit = new Segment(new WorldPoint(4, 0), new WorldPoint(6, 0));
@@ -348,11 +348,11 @@ public class DistanceMapCalculatorTests
         int wallRow = grid.WorldToCell(new WorldPoint(5, 0)).Row;
 
         Assert.All(sources, source => Assert.Equal(7, source.ExitGroupId));
-        Assert.Contains(sources, source => source.Row < wallRow);
         Assert.Contains(sources, source => source.Row > wallRow);
+        Assert.DoesNotContain(sources, source => source.Row < wallRow);
         var result = DistanceMapCalculator.Compute(grid, sources);
 
-        foreach (var query in new[] { new WorldPoint(5, 5), new WorldPoint(5, -0.25) })
+        foreach (var query in new[] { new WorldPoint(5, 5) })
         {
             var path = DistanceMapCalculator.FindPath(grid, result, query);
 
@@ -375,13 +375,13 @@ public class DistanceMapCalculatorTests
         var sources = grid.WalkableSourcesNearSegment(exit, grid.CellSize);
         var result = DistanceMapCalculator.Compute(grid, sources);
 
-        Assert.NotEmpty(sources);
+        Assert.Empty(sources);
         Assert.False(grid.HasLineOfSightToExit(
             new WorldPoint(5, 5),
             new WorldPoint(5, 0),
             exit));
         Assert.Null(DistanceMapCalculator.FindPath(grid, result, new WorldPoint(5, 5)));
-        Assert.NotNull(DistanceMapCalculator.FindPath(grid, result, new WorldPoint(5, -0.05)));
+        Assert.Null(DistanceMapCalculator.FindPath(grid, result, new WorldPoint(5, -0.05)));
     }
 
     [Fact]
@@ -428,8 +428,7 @@ public class DistanceMapCalculatorTests
                 new WorldPoint(cell.Col, cell.Row),
                 new WorldPoint(cell.Col, cell.Row)))
             .ToList();
-        walls.Add(new Segment(new WorldPoint(0, 0), new WorldPoint(0, 0)));
-        walls.Add(new Segment(new WorldPoint(9, 9), new WorldPoint(9, 9)));
+        walls.AddRange(Rectangle(-1, -1, 10, 10));
         return WalkabilityGrid.Build(walls, cellSize: 1, marginCells: 0);
     }
 
