@@ -314,7 +314,11 @@ public partial class MainWindow : Window
 
     private void OnCanvasSizeChanged(object sender, SizeChangedEventArgs e) => Redraw();
 
-    private void OnOverlayToggleChanged(object sender, RoutedEventArgs e) => Redraw();
+    private void OnOverlayToggleChanged(object sender, RoutedEventArgs e)
+    {
+        if (DrawingCanvas is not null)
+            Redraw();
+    }
 
     private void OnThresholdChanged(object sender, TextChangedEventArgs e)
     {

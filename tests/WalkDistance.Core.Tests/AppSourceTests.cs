@@ -6,10 +6,20 @@ public class AppSourceTests
     public void MainWindow_HasDefaultOnIndependentMapAndPathToggles()
     {
         string xaml = ReadAppFile("MainWindow.xaml");
-        Assert.Contains("x:Name=\"MapOverlayToggle\"", xaml);
-        Assert.Contains("x:Name=\"PathOverlayToggle\"", xaml);
+        Assert.Contains("x:Name=\"MapOverlayToggle\" Content=\"디스턴스 맵\"", xaml);
+        Assert.Contains("x:Name=\"PathOverlayToggle\" Content=\"보행경로\"", xaml);
         Assert.Equal(2, xaml.Split("IsChecked=\"True\"").Length - 1);
         Assert.Contains("Checked=\"OnOverlayToggleChanged\" Unchecked=\"OnOverlayToggleChanged\"", xaml);
+    }
+
+    [Fact]
+    public void MainWindow_DefaultCheckedOverlayEventsAreSafeBeforeCanvasInitialization()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnOverlayToggleChanged");
+        int guard = method.IndexOf("DrawingCanvas is not null", StringComparison.Ordinal);
+        int redraw = method.IndexOf("Redraw();", StringComparison.Ordinal);
+
+        Assert.True(guard >= 0 && redraw > guard);
     }
 
     [Fact]
