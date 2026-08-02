@@ -35,7 +35,7 @@
                 <Separator/>
                 <Button x:Name="CalculateButton" Content="보행거리 계산" FontWeight="Bold" Click="OnCalculate"/>
                 <Separator/>
-                <TextBlock Text="출구 모드: 두 번 클릭해 선분 지정 · 우클릭: 그리기 취소 · 출구 클릭: 선택 후 Delete로 삭제 · 계산 후 클릭: 경로 조회"
+                <TextBlock Text="출구 모드 켬: 두 번 클릭해 선분 지정 · 우클릭: 그리기 취소 · 출구 모드 끔: 완료된 출구 클릭해 선택 후 Delete로 삭제 · 계산 후 클릭: 경로 조회"
                            Foreground="DimGray" VerticalAlignment="Center" Margin="4,0"/>
             </ToolBar>
         </ToolBarTray>

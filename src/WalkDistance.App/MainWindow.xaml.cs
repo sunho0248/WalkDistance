@@ -212,11 +212,17 @@ public partial class MainWindow : Window
         }
 
         double selectionToleranceWorld = SelectionToleranceScreenPixels / _transform.Scale;
+        bool hadSelection = _exitEditor.SelectedIndex is not null;
         if (_exitEditor.TrySelectNear(worldPoint, selectionToleranceWorld))
         {
             StatusText.Text = $"출구 {_exitEditor.SelectedIndex!.Value + 1}번 선택됨 · Delete 키로 삭제 · 다른 곳을 클릭하면 선택 해제";
             Redraw();
             return;
+        }
+
+        if (hadSelection)
+        {
+            StatusText.Text = "출구 선택을 해제했습니다.";
         }
 
         if (_grid is null || _result is null)
