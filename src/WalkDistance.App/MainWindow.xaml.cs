@@ -343,18 +343,24 @@ public partial class MainWindow : Window
     {
         if (_walls.Count == 0)
         {
+            InvalidateAnalysis();
             MessageBox.Show(this, "먼저 DXF 또는 프로젝트를 불러오세요.", "알림");
+            Redraw();
             return;
         }
         if (_exitEditor.Segments.Count == 0)
         {
+            InvalidateAnalysis();
             MessageBox.Show(this, "출구를 최소 1개 지정하세요.", "알림");
+            Redraw();
             return;
         }
 
         double? cellSize = ParseCellSize();
         if (cellSize is null)
         {
+            InvalidateAnalysis();
+            Redraw();
             return;
         }
 
@@ -423,6 +429,8 @@ public partial class MainWindow : Window
             _grid = null;
             _result = null;
             _farthestPathPoints = null;
+            _queryPoint = null;
+            _queryDistance = null;
             _queryPathPoints = null;
             MessageBox.Show(this,
                 $"격자가 너무 큽니다 ({ex.RequestedCellCount:N0}셀 / 한도 {ex.MaxCellCount:N0}셀). 셀 크기를 키워 다시 계산하세요.",

@@ -67,6 +67,31 @@ public class WalkabilityGridTests
     }
 
     [Fact]
+    public void Build_TwoClosedOutlinesKeepBothInteriorsAndRejectExteriorGap()
+    {
+        var walls = Rectangle(0, 0, 2, 2);
+        walls.AddRange(Rectangle(4, 0, 6, 2));
+        var grid = WalkabilityGrid.Build(walls, cellSize: 0.25, marginCells: 2);
+
+        Assert.True(grid.IsWalkable(grid.WorldToCell(new WorldPoint(1, 1))));
+        Assert.True(grid.IsWalkable(grid.WorldToCell(new WorldPoint(5, 1))));
+        Assert.False(grid.IsWalkable(grid.WorldToCell(new WorldPoint(3, 1))));
+    }
+
+    [Fact]
+    public void Build_InternalPartitionKeepsFreeCellsOnBothSidesInterior()
+    {
+        var walls = Rectangle(0, 0, 10, 10);
+        walls.Add(new Segment(new WorldPoint(5, 0), new WorldPoint(5, 8)));
+        var grid = WalkabilityGrid.Build(walls, cellSize: 0.25, marginCells: 2);
+
+        Assert.True(grid.IsWalkable(grid.WorldToCell(new WorldPoint(2, 5))));
+        Assert.True(grid.IsWalkable(grid.WorldToCell(new WorldPoint(8, 5))));
+        var partition = grid.WorldToCell(new WorldPoint(5, 5));
+        Assert.True(grid.IsBlocked(partition.Col, partition.Row));
+    }
+
+    [Fact]
     public void Build_MarksCellsAlongWallAsBlocked()
     {
         var walls = new List<Segment>
@@ -224,8 +249,8 @@ public class WalkabilityGridTests
         var grid = WalkabilityGrid.Build(walls, cellSize: 0.1, marginCells: 1);
         var exit = new Segment(new WorldPoint(4, 0), new WorldPoint(6, 0));
 
-        Assert.False(grid.HasLineOfSightToExit(
-            new WorldPoint(5.04, -0.05),
+        Assert.True(grid.HasLineOfSightToExit(
+            new WorldPoint(5.04, 0.05),
             new WorldPoint(5.04, 0),
             exit));
     }

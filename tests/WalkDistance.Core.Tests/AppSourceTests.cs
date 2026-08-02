@@ -108,6 +108,61 @@ public class AppSourceTests
         Assert.DoesNotContain("InvalidateAnalysis", method);
     }
 
+    [Fact]
+    public void HeatmapRenderer_RendersOnlyInteriorWalkableCells()
+    {
+        string source = ReadAppFile("HeatmapRenderer.cs");
+
+        Assert.Contains("!grid.IsWalkable(col, gridRow)", source);
+    }
+
+    [Fact]
+    public void MainWindow_RejectsOutsideBuildingBeforePathLookup()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasLeftClick");
+        int outsideGuard = method.IndexOf("!_grid.Contains(worldPoint)", StringComparison.Ordinal);
+        int findPath = method.IndexOf("DistanceMapCalculator.FindPath", StringComparison.Ordinal);
+
+        Assert.True(outsideGuard >= 0);
+        Assert.True(findPath > outsideGuard);
+        Assert.Contains("선택 지점은 건물 외부입니다.", method);
+    }
+
+    [Fact]
+    public void MainWindow_CalculationFailuresClearStaleAnalysisAndShowKoreanGuidance()
+    {
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        string preFailureClear = Slice(source, "_grid = WalkabilityGrid.Build", "if (_grid.InteriorCellCount == 0)");
+        string openOutline = Slice(source, "if (_grid.InteriorCellCount == 0)", "var sources =");
+        string noExit = Slice(source, "if (sources.Count == 0)", "_result = DistanceMapCalculator.Compute");
+        string sizeLimit = Slice(source, "catch (GridSizeLimitExceededException ex)", "private void ResetAnalysis");
+
+        AssertFailureClearsQuery(preFailureClear);
+        Assert.Contains("닫힌 건물 외곽선", openOutline);
+        Assert.Contains("계산 중단", openOutline);
+        Assert.Contains("사용 가능한 출구", noExit);
+        Assert.Contains("계산 중단", noExit);
+        AssertFailureClearsQuery(sizeLimit);
+        Assert.Contains("격자가 너무 큽니다", sizeLimit);
+        Assert.Contains("계산 중단", sizeLimit);
+    }
+
+    private static void AssertFailureClearsQuery(string source)
+    {
+        Assert.Contains("_result = null", source);
+        Assert.Contains("_queryPoint = null", source);
+        Assert.Contains("_queryDistance = null", source);
+        Assert.Contains("_queryPathPoints = null", source);
+    }
+
+    private static string Slice(string source, string start, string end)
+    {
+        int startIndex = source.IndexOf(start, StringComparison.Ordinal);
+        int endIndex = source.IndexOf(end, startIndex, StringComparison.Ordinal);
+        Assert.True(startIndex >= 0 && endIndex > startIndex);
+        return source[startIndex..endIndex];
+    }
+
     private static string ReadAppFile(string fileName)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
