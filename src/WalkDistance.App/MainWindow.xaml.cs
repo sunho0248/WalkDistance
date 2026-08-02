@@ -174,8 +174,12 @@ public partial class MainWindow : Window
             _exitEditor.HandleRightClick();
             _previewEnd = null;
             StatusText.Text = "출구 선분 그리기가 취소되었습니다.";
-            Redraw();
         }
+        else
+        {
+            StatusText.Text = "출구 지정 모드가 꺼졌습니다. 완료된 출구를 클릭하면 선택할 수 있습니다.";
+        }
+        Redraw();
     }
 
     private void OnClearExits(object sender, RoutedEventArgs e)

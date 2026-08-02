@@ -30,6 +30,25 @@ public class AppSourceTests
             "Stale selection status must be cleared before the analysis-null early return, so a blank click never leaves stale 'selected' status text when no analysis has run yet.");
     }
 
+    [Fact]
+    public void MainWindow_ExitModeOffWithoutPending_SetsAccurateModeOffStatus()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnAddExitModeChanged");
+
+        int pendingCancelIndex = method.IndexOf("출구 선분 그리기가 취소되었습니다.", StringComparison.Ordinal);
+        int modeOffStatusIndex = method.IndexOf("출구 지정 모드가 꺼졌습니다.", StringComparison.Ordinal);
+
+        Assert.True(pendingCancelIndex >= 0, "Expected the pending-cancel status message to remain unchanged.");
+        Assert.True(
+            modeOffStatusIndex >= 0,
+            "Expected an accurate status message for turning exit mode off with nothing pending (e.g. right after completing an exit), instead of leaving the add-mode instruction stale.");
+        Assert.True(
+            modeOffStatusIndex > pendingCancelIndex,
+            "The mode-off status must be the else-branch fallback that runs when there is no pending point to cancel.");
+        Assert.DoesNotContain("_exitEditor.Clear()", method);
+        Assert.DoesNotContain("InvalidateAnalysis", method);
+    }
+
     private static string ReadAppFile(string fileName)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
@@ -40,5 +59,15 @@ public class AppSourceTests
 
         Assert.NotNull(directory);
         return File.ReadAllText(Path.Combine(directory!.FullName, "src", "WalkDistance.App", fileName));
+    }
+
+    private static string ReadAppMethod(string fileName, string methodSignaturePrefix)
+    {
+        string source = ReadAppFile(fileName);
+        int methodStart = source.IndexOf(methodSignaturePrefix, StringComparison.Ordinal);
+        Assert.True(methodStart >= 0, $"Expected to find method starting with '{methodSignaturePrefix}'.");
+        int methodEnd = source.IndexOf("\n    }", methodStart, StringComparison.Ordinal);
+        Assert.True(methodEnd > methodStart, $"Expected to find the closing brace of '{methodSignaturePrefix}'.");
+        return source[methodStart..methodEnd];
     }
 }
