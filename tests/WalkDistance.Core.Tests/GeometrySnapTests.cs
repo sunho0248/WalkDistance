@@ -218,6 +218,53 @@ public class GeometrySnapTests
         Assert.Null(snapped);
     }
 
+    [Fact]
+    public void ProjectOntoSegment_EndpointsNearDoubleMaxWhereRawSubtractionWouldOverflow_ReturnsFiniteZero()
+    {
+        // 0.9 * double.MaxValue is far beyond the 8e307 case already covered above:
+        // end.X - start.X alone (before any scaling) is ~1.8 * double.MaxValue, which
+        // overflows to +Infinity. A fix that only scales dx/dy/px/py *after* computing
+        // them from a naive subtraction is still broken here.
+        double bound = 0.9 * double.MaxValue;
+        var segment = new Segment(new WorldPoint(-bound, -bound), new WorldPoint(bound, bound));
+
+        var projected = GeometrySnap.ProjectOntoSegment(new WorldPoint(0, 0), segment);
+
+        Assert.True(double.IsFinite(projected.X), $"Expected finite X but got {projected.X}.");
+        Assert.True(double.IsFinite(projected.Y), $"Expected finite Y but got {projected.Y}.");
+        AssertFiniteAndClose(0, projected.X);
+        AssertFiniteAndClose(0, projected.Y);
+    }
+
+    [Fact]
+    public void TrySnapToNearest_EndpointsNearDoubleMaxZeroTolerance_QueryAtZeroSnapsExactly()
+    {
+        double bound = 0.9 * double.MaxValue;
+        var segments = new[] { new Segment(new WorldPoint(-bound, -bound), new WorldPoint(bound, bound)) };
+
+        var snapped = GeometrySnap.TrySnapToNearest(new WorldPoint(0, 0), segments, 0.0);
+
+        Assert.NotNull(snapped);
+        Assert.True(double.IsFinite(snapped!.Value.X), $"Expected finite X but got {snapped.Value.X}.");
+        Assert.True(double.IsFinite(snapped.Value.Y), $"Expected finite Y but got {snapped.Value.Y}.");
+        AssertFiniteAndClose(0, snapped.Value.X);
+        AssertFiniteAndClose(0, snapped.Value.Y);
+    }
+
+    [Fact]
+    public void TrySnapToNearest_QueryAndSegmentOnOppositeDoubleMaxExtremes_DistanceOverflowReturnsNullNotNaN()
+    {
+        // point-to-projected distance itself overflows past double range here;
+        // Distance must resolve that as +Infinity (never NaN) so the comparison
+        // against even the largest finite tolerance correctly yields "no snap".
+        double bound = 0.9 * double.MaxValue;
+        var segments = new[] { new Segment(new WorldPoint(bound * 0.9, 0), new WorldPoint(bound, 0)) };
+
+        var snapped = GeometrySnap.TrySnapToNearest(new WorldPoint(-bound, 0), segments, double.MaxValue);
+
+        Assert.Null(snapped);
+    }
+
     private static void AssertFiniteAndClose(double expected, double actual)
     {
         Assert.True(double.IsFinite(actual), $"Expected a finite value but got {actual}.");
