@@ -11,7 +11,7 @@ namespace WalkDistance.App;
 /// </summary>
 public static class HeatmapRenderer
 {
-    public static WriteableBitmap Render(WalkabilityGrid grid, double[,] distances, double maxDistance)
+    public static WriteableBitmap Render(WalkabilityGrid grid, double[,] distances, double maxDistance, double? threshold = null)
     {
         int width = grid.Cols;
         int height = grid.Rows;
@@ -31,7 +31,9 @@ public static class HeatmapRenderer
                 }
 
                 double t = Math.Clamp(d / maxDistance, 0, 1);
-                var (r, g, b) = Gradient(t);
+                var (r, g, b) = threshold is { } limit && d > limit
+                    ? ((byte)190, (byte)35, (byte)210)
+                    : Gradient(t);
                 pixels[idx + 0] = b;
                 pixels[idx + 1] = g;
                 pixels[idx + 2] = r;

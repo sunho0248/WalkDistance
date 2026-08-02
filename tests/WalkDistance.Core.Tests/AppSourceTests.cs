@@ -3,6 +3,40 @@ namespace WalkDistance.Core.Tests;
 public class AppSourceTests
 {
     [Fact]
+    public void MainWindow_HasDefaultOnIndependentMapAndPathToggles()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+        Assert.Contains("x:Name=\"MapOverlayToggle\"", xaml);
+        Assert.Contains("x:Name=\"PathOverlayToggle\"", xaml);
+        Assert.Equal(2, xaml.Split("IsChecked=\"True\"").Length - 1);
+        Assert.Contains("Checked=\"OnOverlayToggleChanged\" Unchecked=\"OnOverlayToggleChanged\"", xaml);
+    }
+
+    [Fact]
+    public void MainWindow_ThresholdIsSessionOnlyValidatedAndUsesStrictExceedance()
+    {
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        Assert.Contains("string.IsNullOrWhiteSpace(ThresholdBox.Text)", source);
+        Assert.Contains("double.IsFinite(threshold) && threshold >= 0", source);
+        Assert.Contains("d > limit", ReadAppFile("HeatmapRenderer.cs"));
+        Assert.DoesNotContain("ThresholdBox.Text = data", source);
+        Assert.DoesNotContain("ThresholdBox.Text", ReadAppFile("MainWindow.xaml").Split("프로젝트 저장")[0]);
+    }
+
+    [Fact]
+    public void MainWindow_OverlayToggleOnlyRedrawsAndGatesTheRequestedLayers()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnOverlayToggleChanged");
+        Assert.Contains("Redraw();", method);
+        Assert.DoesNotContain("InvalidateAnalysis", method);
+        Assert.DoesNotContain("_query", method);
+
+        string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
+        Assert.Contains("MapOverlayToggle.IsChecked == true", redraw);
+        Assert.Contains("PathOverlayToggle.IsChecked == true", redraw);
+    }
+
+    [Fact]
     public void MainWindow_DefaultCellSizeIsPointZeroFive()
     {
         string xaml = ReadAppFile("MainWindow.xaml");

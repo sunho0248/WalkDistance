@@ -27,6 +27,7 @@ public partial class MainWindow : Window
     private IReadOnlyList<WorldPoint>? _farthestPathPoints;
     private IReadOnlyList<WorldPoint>? _queryPathPoints;
     private WorldPoint? _previewEnd;
+    private double? _threshold;
 
     public MainWindow()
     {
@@ -313,6 +314,8 @@ public partial class MainWindow : Window
 
     private void OnCanvasSizeChanged(object sender, SizeChangedEventArgs e) => Redraw();
 
+    private void OnOverlayToggleChanged(object sender, RoutedEventArgs e) => Redraw();
+
     private WorldPoint SnapToNearestWall(WorldPoint worldPoint, out bool snapped)
     {
         if (_transform is null)
@@ -339,6 +342,21 @@ public partial class MainWindow : Window
         return null;
     }
 
+    private bool TryParseThreshold(out double? parsed)
+    {
+        parsed = null;
+        if (string.IsNullOrWhiteSpace(ThresholdBox.Text))
+            return true;
+        if (double.TryParse(ThresholdBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double threshold) &&
+            double.IsFinite(threshold) && threshold >= 0)
+        {
+            parsed = threshold;
+            return true;
+        }
+        MessageBox.Show(this, "기준거리는 0 이상의 유한한 숫자이거나 빈 값이어야 합니다.", "알림");
+        return false;
+    }
+
     private void OnCalculate(object sender, RoutedEventArgs e)
     {
         if (_walls.Count == 0)
@@ -357,7 +375,7 @@ public partial class MainWindow : Window
         }
 
         double? cellSize = ParseCellSize();
-        if (cellSize is null)
+        if (cellSize is null || !TryParseThreshold(out _threshold))
         {
             InvalidateAnalysis();
             Redraw();
@@ -524,9 +542,12 @@ public partial class MainWindow : Window
         var bounds = Bounds.FromSegments(_walls);
         _transform = ViewTransform.Build(bounds, DrawingCanvas.ActualWidth, DrawingCanvas.ActualHeight);
 
-        if (_grid is not null && _result is not null)
+        bool showMap = MapOverlayToggle.IsChecked == true;
+        bool showPaths = PathOverlayToggle.IsChecked == true;
+        if (showMap && _grid is not null && _result is not null)
         {
             DrawHeatmap(_grid, _result);
+            DrawContours(_grid, _result);
         }
 
         foreach (var wall in _walls)
@@ -574,8 +595,11 @@ public partial class MainWindow : Window
             }
         }
 
-        AddPath(_farthestPathPoints, Brushes.OrangeRed, 2.5);
-        AddPath(_queryPathPoints, Brushes.DeepSkyBlue, 2.5);
+        if (showPaths)
+        {
+            AddPath(_farthestPathPoints, Brushes.OrangeRed, 2.5);
+            AddPath(_queryPathPoints, Brushes.DeepSkyBlue, 2.5);
+        }
 
         if (_grid is not null && _result?.FarthestCell is { } farthest)
         {
@@ -600,7 +624,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var bitmap = HeatmapRenderer.Render(grid, result.Distances, result.MaxDistance);
+        var bitmap = HeatmapRenderer.Render(grid, result.Distances, result.MaxDistance, _threshold);
         var topLeft = _transform.ToScreen(new WorldPoint(grid.Bounds.MinX, grid.Bounds.MaxY));
         var image = new Image
         {
@@ -613,6 +637,39 @@ public partial class MainWindow : Window
         Canvas.SetLeft(image, topLeft.X);
         Canvas.SetTop(image, topLeft.Y);
         DrawingCanvas.Children.Add(image);
+    }
+
+    private void DrawContours(WalkabilityGrid grid, DistanceMapResult result)
+    {
+        if (_transform is null)
+            return;
+        var contours = DistanceContourGenerator.Generate(grid, result.Distances, _threshold);
+        foreach (var contour in contours)
+        {
+            var start = _transform.ToScreen(contour.Start);
+            var end = _transform.ToScreen(contour.End);
+            DrawingCanvas.Children.Add(new Line
+            {
+                X1 = start.X, Y1 = start.Y, X2 = end.X, Y2 = end.Y,
+                Stroke = contour.IsThreshold ? Brushes.White : Brushes.Black,
+                StrokeThickness = contour.IsThreshold ? 2.5 : 0.8,
+            });
+        }
+
+        Point? lastLabel = null;
+        foreach (var group in contours.Where(contour => !contour.IsThreshold && contour.Level % 10 == 0)
+                                      .GroupBy(contour => contour.Level))
+        {
+            var point = _transform.ToScreen(group.First().Start);
+            if (lastLabel is { } previous && (point - previous).Length < 60)
+                continue;
+            var label = new TextBlock { Text = $"{group.Key:0} m", Foreground = Brushes.Black,
+                Background = Brushes.White, FontSize = 11, Padding = new Thickness(2, 0, 2, 0) };
+            Canvas.SetLeft(label, point.X + 3);
+            Canvas.SetTop(label, point.Y + 3);
+            DrawingCanvas.Children.Add(label);
+            lastLabel = point;
+        }
     }
 
     private void AddMarker(Point center, double radius, Brush brush, string tooltip)
