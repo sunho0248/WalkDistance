@@ -134,6 +134,20 @@ public class AppSourceTests
     }
 
     [Fact]
+    public void MainWindow_ContoursUseDistinctMinorAndMajorStylesWithTenMeterLabels()
+    {
+        string draw = ReadAppMethod("MainWindow.xaml.cs", "private void DrawContours");
+
+        Assert.Contains("level.Key % 10 == 0", draw);
+        Assert.Contains("Brushes.DimGray", draw);
+        Assert.Contains("Brushes.Black", draw);
+        Assert.Contains("1.6", draw);
+        Assert.Contains("0.8", draw);
+        Assert.Contains("contour.Level % 10 == 0", draw);
+        Assert.Contains("Brushes.White, 2.5", draw);
+    }
+
+    [Fact]
     public void MainWindow_TogglesOnlyRedrawAndDoNotClearCachesOrState()
     {
         string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnOverlayToggleChanged");

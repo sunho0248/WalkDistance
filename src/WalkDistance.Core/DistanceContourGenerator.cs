@@ -8,7 +8,7 @@ public readonly record struct DistanceContour(
 
 public static class DistanceContourGenerator
 {
-    private const double LargestExactInteger = 9_007_199_254_740_992d;
+    private const double LargestExactFiveMeterMultiple = 9_007_199_254_740_990d;
     private const double MaxLevelsPerCell = 1_000_000;
 
     public static IReadOnlyList<DistanceContour> Generate(
@@ -37,14 +37,14 @@ public static class DistanceContourGenerator
         {
             double minimum = Math.Min(Math.Min(av, bv), Math.Min(cv, dv));
             double maximum = Math.Max(Math.Max(av, bv), Math.Max(cv, dv));
-            double first = Math.Max(1, Math.Ceiling(minimum));
-            double last = Math.Min(Math.Floor(maximum), LargestExactInteger);
-            if (first > last || first > LargestExactInteger)
+            double first = Math.Max(5, Math.Ceiling(minimum / 5) * 5);
+            double last = Math.Min(Math.Floor(maximum / 5) * 5, LargestExactFiveMeterMultiple);
+            if (first > last || first > LargestExactFiveMeterMultiple)
                 return;
-            if (last - first > MaxLevelsPerCell)
+            if ((last - first) / 5 > MaxLevelsPerCell)
                 throw new ArgumentOutOfRangeException(nameof(distances),
                     "Adjacent cells cross too many contour levels.");
-            for (double level = first; level <= last; level++)
+            for (double level = first; level <= last; level += 5)
             {
                 AddTriangle(contours, level, false, a, av, b, bv, c, cv);
                 AddTriangle(contours, level, false, a, av, c, cv, d, dv);

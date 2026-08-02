@@ -733,7 +733,10 @@ public partial class MainWindow : Window
         if (_transform is null)
             return;
         foreach (var level in normalContours.GroupBy(contour => contour.Level))
-            AddContourPath(level, Brushes.Black, 0.8);
+        {
+            bool isMajor = level.Key % 10 == 0;
+            AddContourPath(level, isMajor ? Brushes.Black : Brushes.DimGray, isMajor ? 1.6 : 0.8);
+        }
         AddContourPath(thresholdContours, Brushes.White, 2.5);
 
         var labelPoints = new List<Point>();

@@ -5,9 +5,9 @@ namespace WalkDistance.Core.Tests;
 public class DistanceContourGeneratorTests
 {
     [Fact]
-    public void Generate_ProducesOneMeterContoursOnlyAcrossWalkableFiniteCells()
+    public void Generate_ProducesPositiveFiveMeterMultiplesOnlyAcrossWalkableFiniteCells()
     {
-        var grid = WalkabilityGrid.Build(Rectangle(0, 0, 4, 4), cellSize: 1, marginCells: 0);
+        var grid = WalkabilityGrid.Build(Rectangle(0, 0, 15, 4), cellSize: 1, marginCells: 0);
         var distances = new double[grid.Rows, grid.Cols];
         for (int row = 0; row < grid.Rows; row++)
         for (int col = 0; col < grid.Cols; col++)
@@ -18,12 +18,12 @@ public class DistanceContourGeneratorTests
         Assert.NotEmpty(contours);
         Assert.All(contours, contour =>
         {
-            Assert.Equal(Math.Round(contour.Level), contour.Level);
-            Assert.True(contour.Level >= 1);
+            Assert.True(contour.Level > 0);
+            Assert.Equal(0, contour.Level % 5);
             Assert.NotEqual(contour.Start, contour.End);
         });
-        Assert.Contains(contours, contour => contour.Level == 1);
-        Assert.Contains(contours, contour => contour.Level == 2);
+        Assert.Equal([5d, 10d], contours.Select(contour => contour.Level).Distinct().Order().ToArray());
+        Assert.DoesNotContain(contours, contour => contour.Level is 1 or 2 or 3 or 4);
     }
 
     [Fact]
@@ -86,12 +86,15 @@ public class DistanceContourGeneratorTests
     public void Generate_HugeFiniteDistancesOnlyEnumeratesLocallyCrossedLevels()
     {
         var grid = WalkabilityGrid.Build(Rectangle(0, 0, 4, 4), cellSize: 1, marginCells: 0);
-        var distances = Gradient(grid, col => 1_000_000_000d + col);
+        var distances = Gradient(grid, col => 1_000_000_001d + col * 5);
 
         var contours = DistanceContourGenerator.Generate(grid, distances);
 
         Assert.NotEmpty(contours);
-        Assert.All(contours, contour => Assert.InRange(contour.Level, 1_000_000_001, 1_000_000_003));
+        Assert.Equal(
+            [1_000_000_010d, 1_000_000_015d],
+            contours.Select(contour => contour.Level).Distinct().Order().ToArray());
+        Assert.All(contours, contour => Assert.Equal(0, contour.Level % 5));
     }
 
     [Fact]
@@ -110,7 +113,7 @@ public class DistanceContourGeneratorTests
     public void Generate_RejectsAnUnsafeNumberOfLevelsWithinOneCell()
     {
         var grid = WalkabilityGrid.Build(Rectangle(0, 0, 4, 4), cellSize: 1, marginCells: 0);
-        var distances = Gradient(grid, col => col == 1 ? 0 : 2_000_000);
+        var distances = Gradient(grid, col => col == 1 ? 0 : 10_000_000);
 
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             DistanceContourGenerator.Generate(grid, distances));
