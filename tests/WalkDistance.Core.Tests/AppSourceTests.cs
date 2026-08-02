@@ -89,6 +89,17 @@ public class AppSourceTests
     }
 
     [Fact]
+    public void MainWindow_MeasuresAndClampsEveryContourLabelToTheCanvas()
+    {
+        string draw = ReadAppMethod("MainWindow.xaml.cs", "private void DrawContours");
+        Assert.Contains("label.Measure", draw);
+        Assert.Contains("label.DesiredSize", draw);
+        Assert.Contains("LabelPlacement.ClampToCanvas", draw);
+        Assert.Contains("DrawingCanvas.ActualWidth", draw);
+        Assert.Contains("DrawingCanvas.ActualHeight", draw);
+    }
+
+    [Fact]
     public void MainWindow_RedrawUsesCachesWithoutRegeneratingFullMapArtifacts()
     {
         string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");

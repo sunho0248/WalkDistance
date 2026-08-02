@@ -741,8 +741,16 @@ public partial class MainWindow : Window
             var point = SelectLabelPoint(group, labelPoints);
             var label = new TextBlock { Text = $"{group.Key:0} m", Foreground = Brushes.Black,
                 Background = Brushes.White, FontSize = 11, Padding = new Thickness(2, 0, 2, 0) };
-            Canvas.SetLeft(label, point.X + 3);
-            Canvas.SetTop(label, point.Y + 3);
+            label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            var labelPosition = LabelPlacement.ClampToCanvas(
+                new WorldPoint(point.X + 3, point.Y + 3),
+                label.DesiredSize.Width,
+                label.DesiredSize.Height,
+                DrawingCanvas.ActualWidth,
+                DrawingCanvas.ActualHeight,
+                padding: 4);
+            Canvas.SetLeft(label, labelPosition.X);
+            Canvas.SetTop(label, labelPosition.Y);
             DrawingCanvas.Children.Add(label);
             labelPoints.Add(point);
         }
