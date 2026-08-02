@@ -633,7 +633,8 @@ public partial class MainWindow : Window
         if (showMap && _grid is not null && _heatmapBitmap is not null)
         {
             DrawHeatmap(_grid, _heatmapBitmap);
-            DrawContours(_normalContours, _thresholdContours);
+            DrawContours(_normalContours, _thresholdContours,
+                Math.Max(_grid.CellSize * 1e-6, 1e-9));
         }
 
         foreach (var wall in _walls)
@@ -728,7 +729,8 @@ public partial class MainWindow : Window
 
     private void DrawContours(
         IReadOnlyList<DistanceContour> normalContours,
-        IReadOnlyList<DistanceContour> thresholdContours)
+        IReadOnlyList<DistanceContour> thresholdContours,
+        double componentTolerance)
     {
         if (_transform is null)
             return;
@@ -740,11 +742,11 @@ public partial class MainWindow : Window
         AddContourPath(thresholdContours, Brushes.White, 2.5);
 
         var labelPoints = new List<Point>();
-        foreach (var group in normalContours.Where(contour => contour.Level % 10 == 0)
-                                            .GroupBy(contour => contour.Level))
+        var labelContours = normalContours.Where(contour => contour.Level % 10 == 0).ToList();
+        foreach (var component in DistanceContourAssembler.Assemble(labelContours, componentTolerance))
         {
-            var point = SelectLabelPoint(group, labelPoints);
-            var label = new TextBlock { Text = $"{group.Key:0} m", Foreground = Brushes.Black,
+            var point = SelectLabelPoint(component, labelPoints);
+            var label = new TextBlock { Text = $"{component[0].Level:0} m", Foreground = Brushes.Black,
                 Background = Brushes.White, FontSize = 11, Padding = new Thickness(2, 0, 2, 0) };
             label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             var labelPosition = LabelPlacement.ClampToCanvas(

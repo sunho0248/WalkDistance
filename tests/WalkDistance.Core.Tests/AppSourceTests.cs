@@ -90,7 +90,7 @@ public class AppSourceTests
     }
 
     [Fact]
-    public void MainWindow_LabelPlacementTriesAlternateMidpointsAndAlwaysFallsBackPerLevel()
+    public void MainWindow_LabelPlacementTriesAlternateMidpointsAndAlwaysFallsBackPerComponent()
     {
         string method = ReadAppMethod("MainWindow.xaml.cs", "private Point SelectLabelPoint");
         Assert.Contains("Select(contour =>", method);
@@ -145,6 +145,20 @@ public class AppSourceTests
         Assert.Contains("0.8", draw);
         Assert.Contains("contour.Level % 10 == 0", draw);
         Assert.Contains("Brushes.White, 2.5", draw);
+    }
+
+    [Fact]
+    public void MainWindow_LabelsEveryTenMeterContourComponentUsingGridScaledTolerance()
+    {
+        string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
+        string draw = ReadAppMethod("MainWindow.xaml.cs", "private void DrawContours");
+
+        Assert.Contains("Math.Max(_grid.CellSize * 1e-6, 1e-9)", redraw);
+        Assert.Contains("DistanceContourAssembler.Assemble", draw);
+        Assert.Contains("foreach (var component", draw);
+        Assert.Contains("SelectLabelPoint(component", draw);
+        Assert.Contains("component[0].Level", draw);
+        Assert.Contains("AddContourPath(thresholdContours, Brushes.White, 2.5)", draw);
     }
 
     [Fact]
