@@ -11,6 +11,8 @@ namespace WalkDistance.App;
 
 public partial class MainWindow : Window
 {
+    private const double SelectionToleranceScreenPixels = 8;
+
     private List<Segment> _walls = [];
     private readonly ExitLineEditor _exitEditor = new();
     private WalkabilityGrid? _grid;
@@ -161,7 +163,9 @@ public partial class MainWindow : Window
         DrawingCanvas.Cursor = _addExitMode ? Cursors.Cross : Cursors.Arrow;
         if (_addExitMode)
         {
-            StatusText.Text = "도면을 두 번 클릭해 출구 선분을 지정하세요. 우클릭: 그리기 취소/마지막 출구 삭제";
+            _exitEditor.ClearSelection();
+            StatusText.Text = "도면을 두 번 클릭해 출구 선분을 지정하세요. 우클릭: 그리기 취소";
+            Redraw();
             return;
         }
 
@@ -183,6 +187,7 @@ public partial class MainWindow : Window
 
     private void OnCanvasLeftClick(object sender, MouseButtonEventArgs e)
     {
+        DrawingCanvas.Focus();
         if (_walls.Count == 0 || _transform is null)
         {
             return;
@@ -195,7 +200,7 @@ public partial class MainWindow : Window
             {
                 _previewEnd = null;
                 InvalidateAnalysis();
-                StatusText.Text = $"출구 {_exitEditor.Segments.Count}개 지정됨 · 우클릭: 마지막 출구 삭제";
+                StatusText.Text = $"출구 {_exitEditor.Segments.Count}개 지정됨 · 우클릭: 그리기 취소";
             }
             else
             {
@@ -206,8 +211,17 @@ public partial class MainWindow : Window
             return;
         }
 
+        double selectionToleranceWorld = SelectionToleranceScreenPixels / _transform.Scale;
+        if (_exitEditor.TrySelectNear(worldPoint, selectionToleranceWorld))
+        {
+            StatusText.Text = $"출구 {_exitEditor.SelectedIndex!.Value + 1}번 선택됨 · Delete 키로 삭제 · 다른 곳을 클릭하면 선택 해제";
+            Redraw();
+            return;
+        }
+
         if (_grid is null || _result is null)
         {
+            Redraw();
             return;
         }
 
@@ -223,28 +237,34 @@ public partial class MainWindow : Window
 
     private void OnCanvasRightClick(object sender, MouseButtonEventArgs e)
     {
-        if (!_addExitMode)
+        DrawingCanvas.Focus();
+        e.Handled = true;
+        var result = _exitEditor.HandleRightClick();
+        _previewEnd = null;
+        StatusText.Text = result switch
+        {
+            ExitRightClickResult.CancelledPending => "출구 선분 그리기를 취소했습니다.",
+            ExitRightClickResult.ClearedSelection => "출구 선택을 해제했습니다.",
+            _ => "취소할 그리기나 선택이 없습니다.",
+        };
+        Redraw();
+    }
+
+    private void OnCanvasKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Delete)
+        {
+            return;
+        }
+
+        if (!_exitEditor.DeleteSelected())
         {
             return;
         }
 
         e.Handled = true;
-        int previousCount = _exitEditor.Segments.Count;
-        bool cancelledPending = _exitEditor.HandleRightClick();
-        _previewEnd = null;
-        if (cancelledPending)
-        {
-            StatusText.Text = "출구 선분 그리기를 취소했습니다.";
-        }
-        else if (_exitEditor.Segments.Count < previousCount)
-        {
-            InvalidateAnalysis();
-            StatusText.Text = $"마지막 출구를 삭제했습니다. 남은 출구: {_exitEditor.Segments.Count}개";
-        }
-        else
-        {
-            StatusText.Text = "삭제할 출구가 없습니다.";
-        }
+        InvalidateAnalysis();
+        StatusText.Text = $"선택한 출구를 삭제했습니다. 남은 출구: {_exitEditor.Segments.Count}개";
         Redraw();
     }
 
@@ -453,22 +473,25 @@ public partial class MainWindow : Window
             });
         }
 
-        foreach (var exit in _exitEditor.Segments)
+        for (int i = 0; i < _exitEditor.Segments.Count; i++)
         {
+            var exit = _exitEditor.Segments[i];
+            bool isSelected = _exitEditor.SelectedIndex == i;
             var start = _transform.ToScreen(exit.Start);
             var end = _transform.ToScreen(exit.End);
+            var brush = isSelected ? Brushes.DodgerBlue : Brushes.LimeGreen;
             DrawingCanvas.Children.Add(new Line
             {
                 X1 = start.X,
                 Y1 = start.Y,
                 X2 = end.X,
                 Y2 = end.Y,
-                Stroke = Brushes.LimeGreen,
-                StrokeThickness = 3,
-                ToolTip = "출구 선분",
+                Stroke = brush,
+                StrokeThickness = isSelected ? 5 : 3,
+                ToolTip = isSelected ? $"출구 {i + 1}번 (선택됨)" : $"출구 {i + 1}번",
             });
-            AddMarker(start, 4, Brushes.LimeGreen, "출구 시작점");
-            AddMarker(end, 4, Brushes.LimeGreen, "출구 끝점");
+            AddMarker(start, isSelected ? 5 : 4, brush, "출구 시작점");
+            AddMarker(end, isSelected ? 5 : 4, brush, "출구 끝점");
         }
 
         if (_exitEditor.PendingStart is { } pendingStart)
