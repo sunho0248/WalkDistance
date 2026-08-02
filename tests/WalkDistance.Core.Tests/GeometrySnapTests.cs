@@ -148,4 +148,81 @@ public class GeometrySnapTests
         Assert.Null(GeometrySnap.TrySnapToNearest(new WorldPoint(4, 0.001), segments, 0.0));
         Assert.Equal(new WorldPoint(4, 0), GeometrySnap.TrySnapToNearest(new WorldPoint(4, 0), segments, 0.0));
     }
+
+    [Fact]
+    public void ProjectOntoSegment_OppositeSignNearDoubleMaxEndpoints_InteriorPointStaysFiniteAndCorrect()
+    {
+        var segment = new Segment(new WorldPoint(-8e307, -8e307), new WorldPoint(8e307, 8e307));
+
+        var projected = GeometrySnap.ProjectOntoSegment(new WorldPoint(0, 0), segment);
+
+        AssertFiniteAndClose(0, projected.X);
+        AssertFiniteAndClose(0, projected.Y);
+    }
+
+    [Fact]
+    public void ProjectOntoSegment_OppositeSignNearDoubleMaxEndpoints_PastEndClampsToEndpoint()
+    {
+        var segment = new Segment(new WorldPoint(-8e307, -8e307), new WorldPoint(8e307, 8e307));
+
+        var projected = GeometrySnap.ProjectOntoSegment(new WorldPoint(9e307, 9e307), segment);
+
+        Assert.True(double.IsFinite(projected.X));
+        Assert.True(double.IsFinite(projected.Y));
+        Assert.Equal(segment.End, projected);
+    }
+
+    [Fact]
+    public void ProjectOntoSegment_OppositeSignNearDoubleMaxEndpoints_PastStartClampsToEndpoint()
+    {
+        var segment = new Segment(new WorldPoint(-8e307, -8e307), new WorldPoint(8e307, 8e307));
+
+        var projected = GeometrySnap.ProjectOntoSegment(new WorldPoint(-9e307, -9e307), segment);
+
+        Assert.True(double.IsFinite(projected.X));
+        Assert.True(double.IsFinite(projected.Y));
+        Assert.Equal(segment.Start, projected);
+    }
+
+    [Fact]
+    public void TrySnapToNearest_HugeFiniteQueryAndTolerance_SnapsWithFiniteCorrectProjection()
+    {
+        var segments = new[] { new Segment(new WorldPoint(-8e307, -8e307), new WorldPoint(8e307, 8e307)) };
+
+        var snapped = GeometrySnap.TrySnapToNearest(new WorldPoint(4e307, 4e307), segments, 1e300);
+
+        Assert.NotNull(snapped);
+        AssertFiniteAndClose(4e307, snapped!.Value.X);
+        AssertFiniteAndClose(4e307, snapped.Value.Y);
+    }
+
+    [Fact]
+    public void TrySnapToNearest_HugeFiniteToleranceAgainstHugePerpendicularOffset_StillSnapsWithinTolerance()
+    {
+        var segments = new[] { new Segment(new WorldPoint(0, 0), new WorldPoint(10, 0)) };
+
+        var snapped = GeometrySnap.TrySnapToNearest(new WorldPoint(4, 1e300), segments, 2e300);
+
+        Assert.NotNull(snapped);
+        AssertFiniteAndClose(4, snapped!.Value.X);
+        AssertFiniteAndClose(0, snapped.Value.Y);
+    }
+
+    [Fact]
+    public void TrySnapToNearest_HugePerpendicularOffsetExceedsTolerance_ReturnsNullNotNaNFalsePositive()
+    {
+        var segments = new[] { new Segment(new WorldPoint(0, 0), new WorldPoint(10, 0)) };
+
+        var snapped = GeometrySnap.TrySnapToNearest(new WorldPoint(4, 2e300), segments, 1e300);
+
+        Assert.Null(snapped);
+    }
+
+    private static void AssertFiniteAndClose(double expected, double actual)
+    {
+        Assert.True(double.IsFinite(actual), $"Expected a finite value but got {actual}.");
+        double scale = Math.Max(1.0, Math.Abs(expected));
+        double relativeError = Math.Abs(actual - expected) / scale;
+        Assert.True(relativeError <= 1e-9, $"Expected ~{expected} but was {actual} (relative error {relativeError}).");
+    }
 }

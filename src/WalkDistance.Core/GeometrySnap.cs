@@ -44,13 +44,24 @@ public static class GeometrySnap
     {
         double dx = segment.End.X - segment.Start.X;
         double dy = segment.End.Y - segment.Start.Y;
-        double lengthSquared = (dx * dx) + (dy * dy);
-        if (lengthSquared <= double.Epsilon)
+        if (dx == 0 && dy == 0)
         {
             return segment.Start;
         }
 
-        double t = (((point.X - segment.Start.X) * dx) + ((point.Y - segment.Start.Y) * dy)) / lengthSquared;
+        double px = point.X - segment.Start.X;
+        double py = point.Y - segment.Start.Y;
+
+        // Scale by the largest component before combining products, so that
+        // squaring/dot-product terms stay in range even when dx/dy/px/py are
+        // individually finite but too large to square without overflowing.
+        double scale = Math.Max(Math.Abs(dx), Math.Abs(dy));
+        double dxN = dx / scale;
+        double dyN = dy / scale;
+        double pxN = px / scale;
+        double pyN = py / scale;
+
+        double t = ((pxN * dxN) + (pyN * dyN)) / ((dxN * dxN) + (dyN * dyN));
         t = Math.Clamp(t, 0, 1);
         return new WorldPoint(segment.Start.X + (t * dx), segment.Start.Y + (t * dy));
     }
@@ -73,8 +84,18 @@ public static class GeometrySnap
 
     private static double Distance(WorldPoint a, WorldPoint b)
     {
-        double dx = a.X - b.X;
-        double dy = a.Y - b.Y;
-        return Math.Sqrt((dx * dx) + (dy * dy));
+        // Scaled hypot: avoids overflow in dx*dx/dy*dy when either component
+        // is individually finite but too large to square directly.
+        double dx = Math.Abs(a.X - b.X);
+        double dy = Math.Abs(a.Y - b.Y);
+        double max = Math.Max(dx, dy);
+        if (max == 0)
+        {
+            return 0;
+        }
+
+        double min = Math.Min(dx, dy);
+        double ratio = min / max;
+        return max * Math.Sqrt(1 + (ratio * ratio));
     }
 }

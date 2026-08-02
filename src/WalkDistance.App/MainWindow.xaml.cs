@@ -201,17 +201,18 @@ public partial class MainWindow : Window
         var worldPoint = _transform.ToWorld(e.GetPosition(DrawingCanvas));
         if (_addExitMode)
         {
-            var snappedPoint = SnapToNearestWall(worldPoint);
+            var snappedPoint = SnapToNearestWall(worldPoint, out bool snapped);
+            string snapNote = snapped ? " (벽/도형에 자동 스냅)" : "";
             if (_exitEditor.HandleLeftClick(snappedPoint))
             {
                 _previewEnd = null;
                 InvalidateAnalysis();
-                StatusText.Text = $"출구 {_exitEditor.Segments.Count}개 지정됨 (벽/도형에 자동 스냅) · 우클릭: 그리기 취소";
+                StatusText.Text = $"출구 {_exitEditor.Segments.Count}개 지정됨{snapNote} · 우클릭: 그리기 취소";
             }
             else
             {
                 _previewEnd = snappedPoint;
-                StatusText.Text = "출구 시작점 지정됨(벽/도형에 자동 스냅) · 끝점을 클릭하세요. 우클릭: 그리기 취소";
+                StatusText.Text = $"출구 시작점 지정됨{snapNote} · 끝점을 클릭하세요. 우클릭: 그리기 취소";
             }
             Redraw();
             return;
@@ -287,21 +288,24 @@ public partial class MainWindow : Window
             return;
         }
 
-        _previewEnd = SnapToNearestWall(_transform.ToWorld(e.GetPosition(DrawingCanvas)));
+        _previewEnd = SnapToNearestWall(_transform.ToWorld(e.GetPosition(DrawingCanvas)), out _);
         Redraw();
     }
 
     private void OnCanvasSizeChanged(object sender, SizeChangedEventArgs e) => Redraw();
 
-    private WorldPoint SnapToNearestWall(WorldPoint worldPoint)
+    private WorldPoint SnapToNearestWall(WorldPoint worldPoint, out bool snapped)
     {
         if (_transform is null)
         {
+            snapped = false;
             return worldPoint;
         }
 
         double snapToleranceWorld = ExitSnapToleranceScreenPixels / _transform.Scale;
-        return GeometrySnap.TrySnapToNearest(worldPoint, _walls, snapToleranceWorld) ?? worldPoint;
+        var result = GeometrySnap.TrySnapToNearest(worldPoint, _walls, snapToleranceWorld);
+        snapped = result is not null;
+        return result ?? worldPoint;
     }
 
     private double? ParseCellSize()

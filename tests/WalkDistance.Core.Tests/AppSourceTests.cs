@@ -27,13 +27,42 @@ public class AppSourceTests
     public void MainWindow_UsesGeometrySnapForBothClickAndPreview()
     {
         string source = ReadAppFile("MainWindow.xaml.cs");
-        int clickSnapIndex = source.IndexOf("var snappedPoint = SnapToNearestWall(worldPoint);", StringComparison.Ordinal);
-        int previewSnapIndex = source.IndexOf("_previewEnd = SnapToNearestWall(_transform.ToWorld(e.GetPosition(DrawingCanvas)));", StringComparison.Ordinal);
+        int clickSnapIndex = source.IndexOf("var snappedPoint = SnapToNearestWall(worldPoint, out bool snapped);", StringComparison.Ordinal);
+        int previewSnapIndex = source.IndexOf("_previewEnd = SnapToNearestWall(_transform.ToWorld(e.GetPosition(DrawingCanvas)), out _);", StringComparison.Ordinal);
         int scaleUsageIndex = source.IndexOf("ExitSnapToleranceScreenPixels / _transform.Scale", StringComparison.Ordinal);
 
-        Assert.True(clickSnapIndex >= 0, "Expected committed exit clicks to snap via SnapToNearestWall.");
+        Assert.True(clickSnapIndex >= 0, "Expected committed exit clicks to snap via SnapToNearestWall with an out-bool snapped seam.");
         Assert.True(previewSnapIndex >= 0, "Expected the live preview point to snap via SnapToNearestWall.");
         Assert.True(scaleUsageIndex >= 0, "Expected the screen-pixel tolerance to be converted to world units via ViewTransform.Scale.");
+    }
+
+    [Fact]
+    public void MainWindow_SnapToNearestWall_ReportsWhetherItActuallySnappedViaOutBool()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private WorldPoint SnapToNearestWall");
+
+        Assert.Contains("out bool snapped", method);
+        Assert.Contains("GeometrySnap.TrySnapToNearest(worldPoint, _walls, snapToleranceWorld)", method);
+        // Only one nearest-point calculation: the out-bool is derived from its result, not a duplicate call.
+        int firstCallIndex = method.IndexOf("TrySnapToNearest", StringComparison.Ordinal);
+        int secondCallIndex = method.IndexOf("TrySnapToNearest", firstCallIndex + 1, StringComparison.Ordinal);
+        Assert.True(firstCallIndex >= 0, "Expected SnapToNearestWall to call GeometrySnap.TrySnapToNearest.");
+        Assert.Equal(-1, secondCallIndex);
+    }
+
+    [Fact]
+    public void MainWindow_ExitClickStatus_OnlyClaimsSnapForAClickThatActuallySnapped()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasLeftClick");
+
+        Assert.Contains("out bool snapped", method);
+        Assert.Contains("snapped ?", method);
+        Assert.Contains("자동 스냅", method);
+
+        // The old wording unconditionally claimed a snap on every commit/start-point
+        // status regardless of whether GeometrySnap actually found a nearby segment.
+        Assert.DoesNotContain("개 지정됨 (벽/도형에 자동 스냅) · 우클릭", method);
+        Assert.DoesNotContain("시작점 지정됨(벽/도형에 자동 스냅)", method);
     }
 
     [Fact]
