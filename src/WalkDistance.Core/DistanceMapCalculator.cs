@@ -317,10 +317,14 @@ public static class DistanceMapCalculator
             return null;
         }
 
-        var distances = result.Distances;
-        var predecessor = result.Predecessor;
-        var roots = result.Roots;
-        if (result.WinningGroupIndexes is { } winningGroups)
+        var center = grid.CellCenter(cell.Col, cell.Row);
+        if (result.WinningGroupIndexes is not { } winningGroups)
+        {
+            return ReconstructPath(
+                grid, point, cell, result.Distances, result.Predecessor, result.Roots);
+        }
+
+        if (point == center)
         {
             int groupIndex = winningGroups[cell.Row, cell.Col];
             if (groupIndex < 0 || groupIndex >= result.SourceGroups.Count)
@@ -329,11 +333,33 @@ public static class DistanceMapCalculator
             }
 
             var field = ComputeField(grid, result.SourceGroups[groupIndex]);
-            distances = field.Distances;
-            predecessor = field.Predecessor;
-            roots = field.Roots;
+            return ReconstructPath(
+                grid, point, cell, field.Distances, field.Predecessor, field.Roots);
         }
 
+        WalkingPath? bestPath = null;
+        foreach (var sourceGroup in result.SourceGroups)
+        {
+            var field = ComputeField(grid, sourceGroup);
+            var candidate = ReconstructPath(
+                grid, point, cell, field.Distances, field.Predecessor, field.Roots);
+            if (candidate is not null &&
+                (bestPath is null || candidate.Distance < bestPath.Distance))
+            {
+                bestPath = candidate;
+            }
+        }
+        return bestPath;
+    }
+
+    private static WalkingPath? ReconstructPath(
+        WalkabilityGrid grid,
+        WorldPoint point,
+        (int Col, int Row) cell,
+        double[,] distances,
+        (int Col, int Row)?[,] predecessor,
+        IReadOnlyDictionary<(int Col, int Row), DistanceRoot> roots)
+    {
         (int Col, int Row)? firstCell = cell;
         DistanceRoot? directRoot = null;
         var center = grid.CellCenter(cell.Col, cell.Row);

@@ -153,6 +153,20 @@ public class WalkabilityGridTests
             exit));
     }
 
+    [Fact]
+    public void HasLineOfSightToExit_IgnoresDisjointWallInTheTerminalCell()
+    {
+        var walls = Rectangle(0, 0, 10, 10);
+        walls.Add(new Segment(new WorldPoint(5.07, 0.02), new WorldPoint(5.09, 0.02)));
+        var grid = WalkabilityGrid.Build(walls, cellSize: 0.1, marginCells: 1);
+        var exit = new Segment(new WorldPoint(4, 0), new WorldPoint(6, 0));
+
+        Assert.True(grid.HasLineOfSightToExit(
+            new WorldPoint(5.04, -0.05),
+            new WorldPoint(5.04, 0),
+            exit));
+    }
+
     private static List<Segment> Rectangle(double minX, double minY, double maxX, double maxY) =>
     [
         new(new WorldPoint(minX, minY), new WorldPoint(maxX, minY)),

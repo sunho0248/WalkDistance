@@ -264,6 +264,40 @@ public class DistanceMapCalculatorTests
     }
 
     [Fact]
+    public void FindPath_ChoosesNearestExitGroupFromTheActualPoint()
+    {
+        var grid = WalkabilityGrid.Build(Rectangle(0, 0, 1, 1), cellSize: 0.1, marginCells: 0);
+        var exitA = new WorldPoint(0.22, 0.55);
+        var exitB = new WorldPoint(0.45, 0.55);
+        var query = new WorldPoint(0.31, 0.55);
+        DistanceSource Source(WorldPoint exit, int groupId)
+        {
+            var cell = grid.WorldToCell(exit);
+            return new DistanceSource(cell.Col, cell.Row, exit, new Segment(exit, exit), groupId);
+        }
+
+        var sourceA = Source(exitA, 1);
+        var sourceB = Source(exitB, 2);
+        Assert.Equal(0.09, DistanceMapCalculator.FindPath(
+            grid, DistanceMapCalculator.Compute(grid, [sourceA]), query)!.Distance, precision: 10);
+        Assert.Equal(0.14, DistanceMapCalculator.FindPath(
+            grid, DistanceMapCalculator.Compute(grid, [sourceB]), query)!.Distance, precision: 10);
+
+        foreach (var sources in new[]
+                 {
+                     new[] { sourceA, sourceB },
+                     new[] { sourceB, sourceA },
+                 })
+        {
+            var path = DistanceMapCalculator.FindPath(
+                grid, DistanceMapCalculator.Compute(grid, sources), query)!;
+
+            Assert.Equal(exitA, path.Points[^1]);
+            Assert.Equal(0.09, path.Distance, precision: 10);
+        }
+    }
+
+    [Fact]
     public void Compute_FarthestCellAndMaximumUseEveryCellsAnyAnglePathMetric()
     {
         var grid = GridFromBlocked(
@@ -341,11 +375,13 @@ public class DistanceMapCalculatorTests
         var sources = grid.WalkableSourcesNearSegment(exit, grid.CellSize);
         var result = DistanceMapCalculator.Compute(grid, sources);
 
+        Assert.NotEmpty(sources);
         Assert.False(grid.HasLineOfSightToExit(
             new WorldPoint(5, 5),
             new WorldPoint(5, 0),
             exit));
         Assert.Null(DistanceMapCalculator.FindPath(grid, result, new WorldPoint(5, 5)));
+        Assert.NotNull(DistanceMapCalculator.FindPath(grid, result, new WorldPoint(5, -0.05)));
     }
 
     [Fact]

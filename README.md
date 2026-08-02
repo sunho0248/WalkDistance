@@ -59,15 +59,17 @@ dotnet run --project src/WalkDistance.App/WalkDistance.App.csproj
 각 출구 인접 셀에는 실제 출구 선분상의 접점을 저장한다. 일반 line-of-sight는 모든 벽
 셀을 거부한다. 지정된 출구 접점에서 끝나는 마지막 raster 셀은 원본 벽 선분을 다시
 검사해, 그 셀의 벽이 출구와 맞닿거나 겹치고 실제 경로와 벽의 교차점/겹침이 출구 선분
-안에 있을 때만 예외로 허용한다. 따라서 벽 위 출구의 양쪽은 연결하면서 같은 terminal
-cell의 별도 벽은 통과하지 않는다. 조회 좌표에서는 해당 셀의 winning 출구 field 하나만
-재계산해 안전한 predecessor를 복원하고, UI는 한 번 반환된 polyline과 그 길이를 함께 쓴다.
+안에 있을 때만 예외로 허용한다. 따라서 벽 위 출구의 양쪽은 연결하면서 실제 경로와
+교차하는 별도 벽은 통과하지 않는다. 실제 조회 좌표에서는 모든 논리 출구 field의 안전한
+predecessor 경로를 평가해 최단 경로를 고르고, 정확한 셀 중심 조회만 winning field를 쓴다.
+UI는 한 번 반환된 polyline과 그 길이를 함께 쓴다.
 
 출구에서 도달할 수 없는 자유 셀은 무한대로 유지하며 최대값과 가장 먼 지점 선정에서
 제외한다. UI는 제외된 셀 수를 알린다. `N`을 셀 수, `D`를 셀 단위 격자 대각 길이,
-`G`를 출구 수라고 하면 persistent 메모리는 `O(N)`이고, 전체 계산의 최악 시간은 출구 수에
-비례하는 `O(G·(N·D + N log N))`이다. 조회 때는 winning 출구 field 하나를 재계산한 뒤
-`O(L)`로 경로를 복원한다. quadratic string-pull이나 동일 조회 경로의 이중 계산은 없다.
+`G`를 출구 수, `S`를 출구 인접 source 수라고 하면 persistent 메모리는 `O(N+S)`이고,
+전체 계산의 최악 시간은 출구 수에 비례하는 `O(G·(N·D + N log N))`이다. 실제 좌표 조회도
+`G`개 출구 group field를 평가하므로 `O(G·(N·D + N log N) + L)`이며, 정확한 셀 중심은
+winning field 하나만 재계산한다. quadratic string-pull은 없다.
 4,000,000셀은 할당 폭주를 막는 상한일 뿐 속도나 메모리 성공을 보장하지 않으므로 큰
 도면에서는 셀 크기를 키워야 한다.
 

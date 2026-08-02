@@ -88,17 +88,9 @@ public sealed class WalkabilityGrid
             return false;
         }
 
-        var endCell = WorldToCell(contact);
-        bool blockedEndCell = IsBlocked(endCell.Col, endCell.Row);
         var route = new Segment(start, contact);
         foreach (var wall in _walls)
         {
-            if (blockedEndCell &&
-                SegmentIntersectsCell(wall, endCell.Col, endCell.Row, tolerance) &&
-                !TryGetIntersection(wall, exit, tolerance, out _, out _))
-            {
-                return false;
-            }
             if (!WallIntersectionIsAllowed(route, wall, exit, tolerance))
             {
                 return false;
@@ -311,11 +303,17 @@ public sealed class WalkabilityGrid
     {
         var candidates = WalkableCellsNearSegment(segment, proximity);
         var sources = new List<DistanceSource>(candidates.Count);
+        double dx = segment.End.X - segment.Start.X;
+        double dy = segment.End.Y - segment.Start.Y;
+        double lengthSquared = dx * dx + dy * dy;
         foreach (var (col, row) in candidates)
         {
             var center = CellCenter(col, row);
             var contact = ClosestPoint(segment, center);
-            if (HasLineOfSightToExit(center, contact, segment))
+            double projection = (center.X - segment.Start.X) * dx +
+                                (center.Y - segment.Start.Y) * dy;
+            if ((lengthSquared == 0 || projection >= 0 && projection <= lengthSquared) &&
+                HasLineOfSightToExit(center, contact, segment))
             {
                 sources.Add(new DistanceSource(col, row, contact, segment, exitGroupId));
             }
@@ -456,38 +454,6 @@ public sealed class WalkabilityGrid
 
         return IsPointOnSegment(first, exit, tolerance) &&
                IsPointOnSegment(last, exit, tolerance);
-    }
-
-    private bool SegmentIntersectsCell(
-        Segment segment,
-        int col,
-        int row,
-        double tolerance)
-    {
-        double minX = Bounds.MinX + col * CellSize - tolerance;
-        double minY = Bounds.MinY + row * CellSize - tolerance;
-        double maxX = minX + CellSize + 2 * tolerance;
-        double maxY = minY + CellSize + 2 * tolerance;
-
-        bool Contains(WorldPoint point) =>
-            point.X >= minX && point.X <= maxX &&
-            point.Y >= minY && point.Y <= maxY;
-
-        if (Contains(segment.Start) || Contains(segment.End))
-        {
-            return true;
-        }
-
-        var topLeft = new WorldPoint(minX, maxY);
-        var bottomRight = new WorldPoint(maxX, minY);
-        return TryGetIntersection(segment, new Segment(new WorldPoint(minX, minY), bottomRight),
-                   tolerance, out _, out _) ||
-               TryGetIntersection(segment, new Segment(bottomRight, new WorldPoint(maxX, maxY)),
-                   tolerance, out _, out _) ||
-               TryGetIntersection(segment, new Segment(new WorldPoint(maxX, maxY), topLeft),
-                   tolerance, out _, out _) ||
-               TryGetIntersection(segment, new Segment(topLeft, new WorldPoint(minX, minY)),
-                   tolerance, out _, out _);
     }
 
     private static bool TryGetIntersection(
