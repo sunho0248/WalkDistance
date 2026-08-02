@@ -9,21 +9,30 @@ public sealed record DistanceMapResult(
 {
     internal IReadOnlyDictionary<(int Col, int Row), DistanceRoot> Roots { get; init; } =
         new Dictionary<(int Col, int Row), DistanceRoot>();
+    internal IReadOnlyList<IReadOnlyList<DistanceSource>> SourceGroups { get; init; } =
+        Array.Empty<IReadOnlyList<DistanceSource>>();
+    internal int[,]? WinningGroupIndexes { get; init; }
 }
 
 public readonly record struct DistanceSource(
     int Col,
     int Row,
     WorldPoint ExitPoint,
-    Segment? ExitSegment = null);
+    Segment? ExitSegment = null,
+    int? ExitGroupId = null);
 
 public sealed record WalkingPath(IReadOnlyList<WorldPoint> Points, double Distance);
 
 internal readonly record struct DistanceRoot(WorldPoint Contact, Segment? ExitSegment);
 
+internal sealed record DistanceField(
+    double[,] Distances,
+    (int Col, int Row)?[,] Predecessor,
+    IReadOnlyDictionary<(int Col, int Row), DistanceRoot> Roots);
+
 /// <summary>
-/// Multi-source Theta* over a walkability grid. Distances and predecessors
-/// describe the same safe any-angle polylines used by path queries.
+/// Runs one multi-source Theta* field per logical exit, then composes the
+/// fields by taking each cell's minimum safe any-angle distance.
 /// </summary>
 public static class DistanceMapCalculator
 {
@@ -45,15 +54,86 @@ public static class DistanceMapCalculator
 
     public static DistanceMapResult Compute(WalkabilityGrid grid, IReadOnlyList<DistanceSource> sources)
     {
-        var dist = new double[grid.Rows, grid.Cols];
+        var sourceGroups = GroupSources(sources);
+        var dist = CreateDistanceArray(grid);
+        var predecessor = new (int Col, int Row)?[grid.Rows, grid.Cols];
+        var roots = new Dictionary<(int Col, int Row), DistanceRoot>();
+        var winningGroups = new int[grid.Rows, grid.Cols];
         for (int row = 0; row < grid.Rows; row++)
         {
             for (int col = 0; col < grid.Cols; col++)
             {
-                dist[row, col] = double.PositiveInfinity;
+                winningGroups[row, col] = -1;
             }
         }
 
+        for (int groupIndex = 0; groupIndex < sourceGroups.Count; groupIndex++)
+        {
+            var field = ComputeField(grid, sourceGroups[groupIndex]);
+            for (int row = 0; row < grid.Rows; row++)
+            {
+                for (int col = 0; col < grid.Cols; col++)
+                {
+                    if (field.Distances[row, col] >= dist[row, col])
+                    {
+                        continue;
+                    }
+
+                    dist[row, col] = field.Distances[row, col];
+                    predecessor[row, col] = field.Predecessor[row, col];
+                    winningGroups[row, col] = groupIndex;
+                    var cell = (Col: col, Row: row);
+                    if (field.Roots.TryGetValue(cell, out var root))
+                    {
+                        roots[cell] = root;
+                    }
+                    else
+                    {
+                        roots.Remove(cell);
+                    }
+                }
+            }
+        }
+
+        (int Col, int Row)? farthest = null;
+        double maxDistance = 0;
+        int unreachableCellCount = 0;
+        for (int row = 0; row < grid.Rows; row++)
+        {
+            for (int col = 0; col < grid.Cols; col++)
+            {
+                if (grid.IsBlocked(col, row))
+                {
+                    continue;
+                }
+
+                if (!double.IsFinite(dist[row, col]))
+                {
+                    unreachableCellCount++;
+                    continue;
+                }
+
+                if (farthest is null || dist[row, col] > maxDistance)
+                {
+                    maxDistance = dist[row, col];
+                    farthest = (col, row);
+                }
+            }
+        }
+
+        return new DistanceMapResult(dist, farthest, maxDistance, unreachableCellCount, predecessor)
+        {
+            Roots = roots,
+            SourceGroups = sourceGroups,
+            WinningGroupIndexes = winningGroups,
+        };
+    }
+
+    private static DistanceField ComputeField(
+        WalkabilityGrid grid,
+        IReadOnlyList<DistanceSource> sources)
+    {
+        var dist = CreateDistanceArray(grid);
         var visited = new bool[grid.Rows, grid.Cols];
         var predecessor = new (int Col, int Row)?[grid.Rows, grid.Cols];
         var roots = new Dictionary<(int Col, int Row), DistanceRoot>();
@@ -160,36 +240,62 @@ public static class DistanceMapCalculator
             }
         }
 
-        (int Col, int Row)? farthest = null;
-        double maxDistance = 0;
-        int unreachableCellCount = 0;
+        return new DistanceField(dist, predecessor, roots);
+    }
+
+    private static double[,] CreateDistanceArray(WalkabilityGrid grid)
+    {
+        var distances = new double[grid.Rows, grid.Cols];
         for (int row = 0; row < grid.Rows; row++)
         {
             for (int col = 0; col < grid.Cols; col++)
             {
-                if (grid.IsBlocked(col, row))
-                {
-                    continue;
-                }
-
-                if (!double.IsFinite(dist[row, col]))
-                {
-                    unreachableCellCount++;
-                    continue;
-                }
-
-                if (farthest is null || dist[row, col] > maxDistance)
-                {
-                    maxDistance = dist[row, col];
-                    farthest = (col, row);
-                }
+                distances[row, col] = double.PositiveInfinity;
             }
         }
+        return distances;
+    }
 
-        return new DistanceMapResult(dist, farthest, maxDistance, unreachableCellCount, predecessor)
+    private static IReadOnlyList<IReadOnlyList<DistanceSource>> GroupSources(
+        IReadOnlyList<DistanceSource> sources)
+    {
+        var groups = new List<List<DistanceSource>>();
+        var explicitGroups = new Dictionary<int, int>();
+        var segmentGroups = new Dictionary<Segment, int>();
+
+        foreach (var source in sources)
         {
-            Roots = roots,
-        };
+            int groupIndex;
+            if (source.ExitGroupId is { } exitGroupId)
+            {
+                if (!explicitGroups.TryGetValue(exitGroupId, out groupIndex))
+                {
+                    groupIndex = groups.Count;
+                    explicitGroups.Add(exitGroupId, groupIndex);
+                    groups.Add([]);
+                }
+            }
+            else if (source.ExitSegment is { } exitSegment)
+            {
+                if (!segmentGroups.TryGetValue(exitSegment, out groupIndex))
+                {
+                    groupIndex = groups.Count;
+                    segmentGroups.Add(exitSegment, groupIndex);
+                    groups.Add([]);
+                }
+            }
+            else
+            {
+                groupIndex = groups.Count;
+                groups.Add([]);
+            }
+
+            groups[groupIndex].Add(source);
+        }
+
+        return groups
+            .Select(group => (IReadOnlyList<DistanceSource>)group.ToArray())
+            .ToArray();
     }
 
     public static WalkingPath? FindPath(
@@ -211,20 +317,37 @@ public static class DistanceMapCalculator
             return null;
         }
 
+        var distances = result.Distances;
+        var predecessor = result.Predecessor;
+        var roots = result.Roots;
+        if (result.WinningGroupIndexes is { } winningGroups)
+        {
+            int groupIndex = winningGroups[cell.Row, cell.Col];
+            if (groupIndex < 0 || groupIndex >= result.SourceGroups.Count)
+            {
+                return null;
+            }
+
+            var field = ComputeField(grid, result.SourceGroups[groupIndex]);
+            distances = field.Distances;
+            predecessor = field.Predecessor;
+            roots = field.Roots;
+        }
+
         (int Col, int Row)? firstCell = cell;
         DistanceRoot? directRoot = null;
         var center = grid.CellCenter(cell.Col, cell.Row);
         double bestDistance = grid.HasLineOfSight(point, center)
-            ? Distance(point, center) + result.Distances[cell.Row, cell.Col]
+            ? Distance(point, center) + distances[cell.Row, cell.Col]
             : double.PositiveInfinity;
 
-        if (result.Predecessor[cell.Row, cell.Col] is { } parent)
+        if (predecessor[cell.Row, cell.Col] is { } parent)
         {
             var parentCenter = grid.CellCenter(parent.Col, parent.Row);
             if (grid.HasLineOfSight(point, parentCenter))
             {
                 double candidate =
-                    Distance(point, parentCenter) + result.Distances[parent.Row, parent.Col];
+                    Distance(point, parentCenter) + distances[parent.Row, parent.Col];
                 if (candidate <= bestDistance)
                 {
                     bestDistance = candidate;
@@ -232,7 +355,7 @@ public static class DistanceMapCalculator
                 }
             }
         }
-        else if (result.Roots.TryGetValue(cell, out var root) &&
+        else if (roots.TryGetValue(cell, out var root) &&
                  HasLineOfSightToRoot(grid, point, root))
         {
             double candidate = Distance(point, root.Contact);
@@ -259,12 +382,12 @@ public static class DistanceMapCalculator
             while (true)
             {
                 AddIfDifferent(points, grid.CellCenter(pathCell.Col, pathCell.Row));
-                if (result.Predecessor[pathCell.Row, pathCell.Col] is { } previous)
+                if (predecessor[pathCell.Row, pathCell.Col] is { } previous)
                 {
                     pathCell = previous;
                     continue;
                 }
-                if (!result.Roots.TryGetValue(pathCell, out var pathRoot))
+                if (!roots.TryGetValue(pathCell, out var pathRoot))
                 {
                     return null;
                 }

@@ -105,6 +105,54 @@ public class WalkabilityGridTests
         Assert.All(cells, cell => Assert.True(grid.CellCenter(cell.Col, cell.Row).X < 2));
     }
 
+    [Fact]
+    public void HasLineOfSightToExit_HandlesExitEndpointAndCollinearOverlap()
+    {
+        var grid = WalkabilityGrid.Build(
+            [new Segment(new WorldPoint(0, 0), new WorldPoint(10, 0))],
+            cellSize: 1,
+            marginCells: 1);
+        var exit = new Segment(new WorldPoint(4.5, 0), new WorldPoint(6.5, 0));
+
+        Assert.True(grid.HasLineOfSightToExit(
+            new WorldPoint(4.75, 0.5),
+            new WorldPoint(4.75, 0),
+            exit));
+        Assert.True(grid.HasLineOfSightToExit(
+            new WorldPoint(4.55, 0),
+            new WorldPoint(4.75, 0),
+            exit));
+        Assert.False(grid.HasLineOfSightToExit(
+            new WorldPoint(4.25, 0),
+            new WorldPoint(4.75, 0),
+            exit));
+    }
+
+    [Fact]
+    public void HasLineOfSightToExit_RejectsNonExitWallEndpointAtLargeCoordinates()
+    {
+        const double origin = 1_000_000_000;
+        var exit = new Segment(
+            new WorldPoint(origin + 4, origin),
+            new WorldPoint(origin + 6, origin));
+        var walls = Rectangle(origin, origin, origin + 10, origin + 10);
+        var clearGrid = WalkabilityGrid.Build(walls, cellSize: 0.1, marginCells: 1);
+        Assert.True(clearGrid.HasLineOfSightToExit(
+            new WorldPoint(origin + 5, origin + 0.05),
+            new WorldPoint(origin + 5, origin),
+            exit));
+
+        walls.Add(new Segment(
+            new WorldPoint(origin + 5, origin + 0.02),
+            new WorldPoint(origin + 6, origin + 0.02)));
+        var grid = WalkabilityGrid.Build(walls, cellSize: 0.1, marginCells: 1);
+
+        Assert.False(grid.HasLineOfSightToExit(
+            new WorldPoint(origin + 5, origin + 0.05),
+            new WorldPoint(origin + 5, origin),
+            exit));
+    }
+
     private static List<Segment> Rectangle(double minX, double minY, double maxX, double maxY) =>
     [
         new(new WorldPoint(minX, minY), new WorldPoint(maxX, minY)),

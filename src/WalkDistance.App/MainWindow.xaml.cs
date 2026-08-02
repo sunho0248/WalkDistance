@@ -299,7 +299,8 @@ public partial class MainWindow : Window
             _farthestPathPoints = null;
             _queryPathPoints = null;
             var sources = _exitEditor.Segments
-                .SelectMany(exit => _grid.WalkableSourcesNearSegment(exit, _grid.CellSize))
+                .SelectMany((exit, exitGroupId) =>
+                    _grid.WalkableSourcesNearSegment(exit, _grid.CellSize, exitGroupId))
                 .ToList();
             if (sources.Count == 0)
             {

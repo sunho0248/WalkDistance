@@ -25,14 +25,22 @@ public sealed class WalkabilityGrid
     public int Cols { get; }
     public int Rows { get; }
     private readonly bool[,] _blocked;
+    private readonly Segment[] _walls;
 
-    private WalkabilityGrid(double cellSize, Bounds bounds, int cols, int rows, bool[,] blocked)
+    private WalkabilityGrid(
+        double cellSize,
+        Bounds bounds,
+        int cols,
+        int rows,
+        bool[,] blocked,
+        Segment[] walls)
     {
         CellSize = cellSize;
         Bounds = bounds;
         Cols = cols;
         Rows = rows;
         _blocked = blocked;
+        _walls = walls;
     }
 
     public bool IsBlocked(int col, int row) => _blocked[row, col];
@@ -65,12 +73,38 @@ public sealed class WalkabilityGrid
     /// </summary>
     public bool HasLineOfSightToExit(WorldPoint start, WorldPoint contact, Segment exit)
     {
-        double tolerance = Math.Max(1e-9, CellSize * 1e-9);
+        if (!IsFinite(exit.Start) || !IsFinite(exit.End))
+        {
+            return false;
+        }
+
+        double tolerance = GeometryTolerance(exit);
         if (SquaredDistance(contact, ClosestPoint(exit, contact)) > tolerance * tolerance)
         {
             return false;
         }
-        return HasLineOfSight(start, contact, allowBlockedEndCell: true);
+        if (!HasLineOfSight(start, contact, allowBlockedEndCell: true))
+        {
+            return false;
+        }
+
+        var endCell = WorldToCell(contact);
+        bool blockedEndCell = IsBlocked(endCell.Col, endCell.Row);
+        var route = new Segment(start, contact);
+        foreach (var wall in _walls)
+        {
+            if (blockedEndCell &&
+                SegmentIntersectsCell(wall, endCell.Col, endCell.Row, tolerance) &&
+                !TryGetIntersection(wall, exit, tolerance, out _, out _))
+            {
+                return false;
+            }
+            if (!WallIntersectionIsAllowed(route, wall, exit, tolerance))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     private bool HasLineOfSight(WorldPoint start, WorldPoint end, bool allowBlockedEndCell)
@@ -272,7 +306,8 @@ public sealed class WalkabilityGrid
     /// </summary>
     public IReadOnlyList<DistanceSource> WalkableSourcesNearSegment(
         Segment segment,
-        double proximity)
+        double proximity,
+        int? exitGroupId = null)
     {
         var candidates = WalkableCellsNearSegment(segment, proximity);
         var sources = new List<DistanceSource>(candidates.Count);
@@ -282,7 +317,7 @@ public sealed class WalkabilityGrid
             var contact = ClosestPoint(segment, center);
             if (HasLineOfSightToExit(center, contact, segment))
             {
-                sources.Add(new DistanceSource(col, row, contact, segment));
+                sources.Add(new DistanceSource(col, row, contact, segment, exitGroupId));
             }
         }
         return sources;
@@ -313,7 +348,8 @@ public sealed class WalkabilityGrid
             throw new ArgumentOutOfRangeException(nameof(maxCellCount));
         }
 
-        var bounds = Bounds.FromSegments(walls);
+        var wallSnapshot = walls.ToArray();
+        var bounds = Bounds.FromSegments(wallSnapshot);
         var padded = new Bounds(
             bounds.MinX - marginCells * cellSize,
             bounds.MinY - marginCells * cellSize,
@@ -342,9 +378,9 @@ public sealed class WalkabilityGrid
             padded.MinY,
             padded.MinX + cols * cellSize,
             padded.MinY + rows * cellSize);
-        var grid = new WalkabilityGrid(cellSize, gridBounds, cols, rows, blocked);
+        var grid = new WalkabilityGrid(cellSize, gridBounds, cols, rows, blocked, wallSnapshot);
 
-        foreach (var wall in walls)
+        foreach (var wall in wallSnapshot)
         {
             grid.RasterizeSegment(wall);
         }
@@ -392,6 +428,193 @@ public sealed class WalkabilityGrid
         double dy = b.Y - a.Y;
         return dx * dx + dy * dy;
     }
+
+    private double GeometryTolerance(Segment exit)
+    {
+        double coordinateScale = Math.Max(1, Math.Abs(Bounds.MinX));
+        coordinateScale = Math.Max(coordinateScale, Math.Abs(Bounds.MinY));
+        coordinateScale = Math.Max(coordinateScale, Math.Abs(Bounds.MaxX));
+        coordinateScale = Math.Max(coordinateScale, Math.Abs(Bounds.MaxY));
+        coordinateScale = Math.Max(coordinateScale, Math.Abs(exit.Start.X));
+        coordinateScale = Math.Max(coordinateScale, Math.Abs(exit.Start.Y));
+        coordinateScale = Math.Max(coordinateScale, Math.Abs(exit.End.X));
+        coordinateScale = Math.Max(coordinateScale, Math.Abs(exit.End.Y));
+        const double machineEpsilon = 2.2204460492503131e-16;
+        return Math.Max(CellSize * 1e-9, coordinateScale * 64 * machineEpsilon);
+    }
+
+    private static bool WallIntersectionIsAllowed(
+        Segment route,
+        Segment wall,
+        Segment exit,
+        double tolerance)
+    {
+        if (!TryGetIntersection(route, wall, tolerance, out var first, out var last))
+        {
+            return true;
+        }
+
+        return IsPointOnSegment(first, exit, tolerance) &&
+               IsPointOnSegment(last, exit, tolerance);
+    }
+
+    private bool SegmentIntersectsCell(
+        Segment segment,
+        int col,
+        int row,
+        double tolerance)
+    {
+        double minX = Bounds.MinX + col * CellSize - tolerance;
+        double minY = Bounds.MinY + row * CellSize - tolerance;
+        double maxX = minX + CellSize + 2 * tolerance;
+        double maxY = minY + CellSize + 2 * tolerance;
+
+        bool Contains(WorldPoint point) =>
+            point.X >= minX && point.X <= maxX &&
+            point.Y >= minY && point.Y <= maxY;
+
+        if (Contains(segment.Start) || Contains(segment.End))
+        {
+            return true;
+        }
+
+        var topLeft = new WorldPoint(minX, maxY);
+        var bottomRight = new WorldPoint(maxX, minY);
+        return TryGetIntersection(segment, new Segment(new WorldPoint(minX, minY), bottomRight),
+                   tolerance, out _, out _) ||
+               TryGetIntersection(segment, new Segment(bottomRight, new WorldPoint(maxX, maxY)),
+                   tolerance, out _, out _) ||
+               TryGetIntersection(segment, new Segment(new WorldPoint(maxX, maxY), topLeft),
+                   tolerance, out _, out _) ||
+               TryGetIntersection(segment, new Segment(topLeft, new WorldPoint(minX, minY)),
+                   tolerance, out _, out _);
+    }
+
+    private static bool TryGetIntersection(
+        Segment first,
+        Segment second,
+        double tolerance,
+        out WorldPoint intersectionStart,
+        out WorldPoint intersectionEnd)
+    {
+        intersectionStart = default;
+        intersectionEnd = default;
+        double rx = first.End.X - first.Start.X;
+        double ry = first.End.Y - first.Start.Y;
+        double sx = second.End.X - second.Start.X;
+        double sy = second.End.Y - second.Start.Y;
+        double firstLength = Math.Sqrt(rx * rx + ry * ry);
+        double secondLength = Math.Sqrt(sx * sx + sy * sy);
+
+        if (firstLength <= tolerance)
+        {
+            if (!IsPointOnSegment(first.Start, second, tolerance))
+            {
+                return false;
+            }
+            intersectionStart = intersectionEnd = first.Start;
+            return true;
+        }
+        if (secondLength <= tolerance)
+        {
+            if (!IsPointOnSegment(second.Start, first, tolerance))
+            {
+                return false;
+            }
+            intersectionStart = intersectionEnd = second.Start;
+            return true;
+        }
+
+        double qpx = second.Start.X - first.Start.X;
+        double qpy = second.Start.Y - first.Start.Y;
+        double cross = Cross(rx, ry, sx, sy);
+        double parallelTolerance = tolerance * Math.Max(firstLength, secondLength);
+        if (Math.Abs(cross) > parallelTolerance)
+        {
+            double t = Cross(qpx, qpy, sx, sy) / cross;
+            double u = Cross(qpx, qpy, rx, ry) / cross;
+            if (t < -tolerance / firstLength || t > 1 + tolerance / firstLength ||
+                u < -tolerance / secondLength || u > 1 + tolerance / secondLength)
+            {
+                return false;
+            }
+
+            double clampedT = Math.Clamp(t, 0, 1);
+            intersectionStart = intersectionEnd = new WorldPoint(
+                first.Start.X + rx * clampedT,
+                first.Start.Y + ry * clampedT);
+            return true;
+        }
+
+        bool collinear = DistanceFromLine(second.Start, first.Start, rx, ry, firstLength) <= tolerance &&
+                         DistanceFromLine(second.End, first.Start, rx, ry, firstLength) <= tolerance;
+        if (collinear)
+        {
+            double lengthSquared = firstLength * firstLength;
+            double t0 = (qpx * rx + qpy * ry) / lengthSquared;
+            double t1 = t0 + (sx * rx + sy * ry) / lengthSquared;
+            double overlapStart = Math.Max(0, Math.Min(t0, t1));
+            double overlapEnd = Math.Min(1, Math.Max(t0, t1));
+            if (overlapStart > overlapEnd + tolerance / firstLength)
+            {
+                return false;
+            }
+
+            overlapStart = Math.Clamp(overlapStart, 0, 1);
+            overlapEnd = Math.Clamp(overlapEnd, 0, 1);
+            intersectionStart = new WorldPoint(
+                first.Start.X + rx * overlapStart,
+                first.Start.Y + ry * overlapStart);
+            intersectionEnd = new WorldPoint(
+                first.Start.X + rx * overlapEnd,
+                first.Start.Y + ry * overlapEnd);
+            return true;
+        }
+
+        bool found = false;
+        AddIntersectionCandidate(second.Start, first, tolerance,
+            ref found, ref intersectionStart, ref intersectionEnd);
+        AddIntersectionCandidate(second.End, first, tolerance,
+            ref found, ref intersectionStart, ref intersectionEnd);
+        AddIntersectionCandidate(first.Start, second, tolerance,
+            ref found, ref intersectionStart, ref intersectionEnd);
+        AddIntersectionCandidate(first.End, second, tolerance,
+            ref found, ref intersectionStart, ref intersectionEnd);
+        return found;
+    }
+
+    private static void AddIntersectionCandidate(
+        WorldPoint candidate,
+        Segment other,
+        double tolerance,
+        ref bool found,
+        ref WorldPoint first,
+        ref WorldPoint last)
+    {
+        if (!IsPointOnSegment(candidate, other, tolerance))
+        {
+            return;
+        }
+        if (!found)
+        {
+            first = candidate;
+            found = true;
+        }
+        last = candidate;
+    }
+
+    private static bool IsPointOnSegment(WorldPoint point, Segment segment, double tolerance) =>
+        SquaredDistance(point, ClosestPoint(segment, point)) <= tolerance * tolerance;
+
+    private static double DistanceFromLine(
+        WorldPoint point,
+        WorldPoint lineStart,
+        double dx,
+        double dy,
+        double lineLength) =>
+        Math.Abs(Cross(point.X - lineStart.X, point.Y - lineStart.Y, dx, dy)) / lineLength;
+
+    private static double Cross(double ax, double ay, double bx, double by) => ax * by - ay * bx;
 
     private static bool IsGridLine(double value) =>
         Math.Abs(value - Math.Round(value)) <= 1e-10;
