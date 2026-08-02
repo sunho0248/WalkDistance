@@ -34,7 +34,9 @@
                 <TextBox x:Name="CellSizeBox" Width="50" Text="0.05" VerticalAlignment="Center"/>
                 <Separator/>
                 <TextBlock Text="기준거리(m):" VerticalAlignment="Center" Margin="4,0"/>
-                <TextBox x:Name="ThresholdBox" Width="55" VerticalAlignment="Center" ToolTip="비우면 기준거리 표시 안 함"/>
+                <TextBox x:Name="ThresholdBox" Width="55" VerticalAlignment="Center"
+                         TextChanged="OnThresholdChanged" LostFocus="OnThresholdLostFocus" KeyDown="OnThresholdKeyDown"
+                         ToolTip="비우면 끔 · 보라색: 기준거리 초과(d &gt; 기준) · 흰 선: 기준 경계"/>
                 <Separator/>
                 <Button x:Name="CalculateButton" Content="보행거리 계산" FontWeight="Bold" Click="OnCalculate"/>
                 <Separator/>

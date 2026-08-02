@@ -37,6 +37,45 @@ public class AppSourceTests
     }
 
     [Fact]
+    public void MainWindow_ThresholdEditsRedrawWithoutClearingAnalysisOrPriorValidValue()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+        Assert.Contains("TextChanged=\"OnThresholdChanged\"", xaml);
+        Assert.Contains("KeyDown=\"OnThresholdKeyDown\"", xaml);
+        string changed = ReadAppMethod("MainWindow.xaml.cs", "private void OnThresholdChanged");
+        Assert.Contains("Redraw();", changed);
+        Assert.Contains("ThresholdBox.BorderBrush", changed);
+        Assert.DoesNotContain("InvalidateAnalysis", changed);
+        Assert.DoesNotContain("_result = null", changed);
+        Assert.DoesNotContain("_query", changed);
+        Assert.Contains("CultureInfo.CurrentCulture", ReadAppFile("MainWindow.xaml.cs"));
+        Assert.Contains("CultureInfo.InvariantCulture", ReadAppFile("MainWindow.xaml.cs"));
+    }
+
+    [Fact]
+    public void MainWindow_InvalidThresholdCalculationDoesNotInvalidateExistingAnalysis()
+    {
+        string calculate = ReadAppMethod("MainWindow.xaml.cs", "private void OnCalculate");
+        int thresholdGuard = calculate.IndexOf("TryParseThreshold", StringComparison.Ordinal);
+        int buildGrid = calculate.IndexOf("WalkabilityGrid.Build", StringComparison.Ordinal);
+        Assert.True(thresholdGuard >= 0 && thresholdGuard < buildGrid);
+        int acceptedThreshold = calculate.IndexOf("_threshold = threshold", thresholdGuard, StringComparison.Ordinal);
+        string guard = calculate[thresholdGuard..acceptedThreshold];
+        Assert.DoesNotContain("InvalidateAnalysis", guard);
+    }
+
+    [Fact]
+    public void MainWindow_LabelPlacementTriesAlternateMidpointsAndAlwaysFallsBackPerLevel()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private Point SelectLabelPoint");
+        Assert.Contains("Select(contour =>", method);
+        Assert.Contains("FirstOrDefault", method);
+        Assert.Contains("?? candidates[0]", method);
+        string draw = ReadAppMethod("MainWindow.xaml.cs", "private void DrawContours");
+        Assert.Contains("SelectLabelPoint", draw);
+    }
+
+    [Fact]
     public void MainWindow_DefaultCellSizeIsPointZeroFive()
     {
         string xaml = ReadAppFile("MainWindow.xaml");

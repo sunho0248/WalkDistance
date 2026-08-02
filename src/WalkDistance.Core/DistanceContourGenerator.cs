@@ -18,13 +18,6 @@ public static class DistanceContourGenerator
         if (threshold is { } value && (!double.IsFinite(value) || value < 0))
             throw new ArgumentOutOfRangeException(nameof(threshold));
 
-        double maximum = distances.Cast<double>().Where(double.IsFinite).DefaultIfEmpty(0).Max();
-        var levels = Enumerable.Range(1, Math.Max(0, (int)Math.Floor(maximum)))
-            .Select(level => (Value: (double)level, IsThreshold: threshold == level))
-            .ToList();
-        if (threshold is { } thresholdValue && !levels.Any(level => level.Value == thresholdValue))
-            levels.Add((thresholdValue, true));
-
         var contours = new List<DistanceContour>();
         for (int row = 0; row < grid.Rows - 1; row++)
         for (int col = 0; col < grid.Cols - 1; col++)
@@ -36,20 +29,36 @@ public static class DistanceContourGenerator
 
             var points = cells.Select(cell => grid.CellCenter(cell.Item1, cell.Item2)).ToArray();
             var values = cells.Select(cell => distances[cell.Item2, cell.Item1]).ToArray();
-            foreach (var level in levels)
+            double firstLevel = Math.Max(1, Math.Ceiling(values.Min()));
+            double lastLevel = Math.Floor(values.Max());
+            const double largestExactInteger = 9_007_199_254_740_992d;
+            if (firstLevel <= lastLevel && firstLevel <= largestExactInteger)
             {
-                AddTriangle(0, 1, 2, level);
-                AddTriangle(0, 2, 3, level);
+                lastLevel = Math.Min(lastLevel, largestExactInteger);
+                if (lastLevel - firstLevel > 1_000_000)
+                    throw new ArgumentOutOfRangeException(nameof(distances),
+                        "Adjacent cells cross too many contour levels.");
+                for (double level = firstLevel; level <= lastLevel; level++)
+                {
+                    AddTriangle(0, 1, 2, level, false);
+                    AddTriangle(0, 2, 3, level, false);
+                }
+            }
+            if (threshold is { } thresholdValue &&
+                thresholdValue >= values.Min() && thresholdValue <= values.Max())
+            {
+                AddTriangle(0, 1, 2, thresholdValue, true);
+                AddTriangle(0, 2, 3, thresholdValue, true);
             }
 
-            void AddTriangle(int a, int b, int c, (double Value, bool IsThreshold) level)
+            void AddTriangle(int a, int b, int c, double level, bool isThreshold)
             {
                 var crossings = new List<WorldPoint>(3);
-                AddCrossing(a, b, level.Value, crossings);
-                AddCrossing(b, c, level.Value, crossings);
-                AddCrossing(c, a, level.Value, crossings);
+                AddCrossing(a, b, level, crossings);
+                AddCrossing(b, c, level, crossings);
+                AddCrossing(c, a, level, crossings);
                 if (crossings.Distinct().Take(2).ToArray() is [var start, var end] && start != end)
-                    contours.Add(new DistanceContour(level.Value, start, end, level.IsThreshold));
+                    contours.Add(new DistanceContour(level, start, end, isThreshold));
             }
 
             void AddCrossing(int a, int b, double level, List<WorldPoint> crossings)

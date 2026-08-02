@@ -316,6 +316,36 @@ public partial class MainWindow : Window
 
     private void OnOverlayToggleChanged(object sender, RoutedEventArgs e) => Redraw();
 
+    private void OnThresholdChanged(object sender, TextChangedEventArgs e)
+    {
+        if (TryParseThreshold(out double? threshold))
+        {
+            _threshold = threshold;
+            ThresholdBox.ClearValue(BorderBrushProperty);
+            ThresholdBox.ToolTip = threshold is null
+                ? "기준거리 표시 꺼짐 · 숫자를 입력하면 초과 영역과 경계를 표시합니다."
+                : $"보라색: {threshold:G} m 초과(d > 기준) · 흰 선: {threshold:G} m 경계";
+        }
+        else
+        {
+            ThresholdBox.BorderBrush = Brushes.Red;
+            ThresholdBox.ToolTip = "0 이상의 유한한 숫자 또는 빈 값을 입력하세요. 이전 유효 기준은 유지됩니다.";
+        }
+        if (DrawingCanvas is not null)
+            Redraw();
+    }
+
+    private void OnThresholdLostFocus(object sender, RoutedEventArgs e) => OnThresholdChanged(sender, null!);
+
+    private void OnThresholdKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            OnThresholdChanged(sender, null!);
+            e.Handled = true;
+        }
+    }
+
     private WorldPoint SnapToNearestWall(WorldPoint worldPoint, out bool snapped)
     {
         if (_transform is null)
@@ -347,13 +377,13 @@ public partial class MainWindow : Window
         parsed = null;
         if (string.IsNullOrWhiteSpace(ThresholdBox.Text))
             return true;
-        if (double.TryParse(ThresholdBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double threshold) &&
+        if ((double.TryParse(ThresholdBox.Text, NumberStyles.Float, CultureInfo.CurrentCulture, out double threshold) ||
+             double.TryParse(ThresholdBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out threshold)) &&
             double.IsFinite(threshold) && threshold >= 0)
         {
             parsed = threshold;
             return true;
         }
-        MessageBox.Show(this, "기준거리는 0 이상의 유한한 숫자이거나 빈 값이어야 합니다.", "알림");
         return false;
     }
 
@@ -374,8 +404,15 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (!TryParseThreshold(out double? threshold))
+        {
+            ThresholdBox.BorderBrush = Brushes.Red;
+            ThresholdBox.ToolTip = "0 이상의 유한한 숫자 또는 빈 값을 입력하세요. 기존 분석은 유지됩니다.";
+            return;
+        }
+        _threshold = threshold;
         double? cellSize = ParseCellSize();
-        if (cellSize is null || !TryParseThreshold(out _threshold))
+        if (cellSize is null)
         {
             InvalidateAnalysis();
             Redraw();
@@ -656,20 +693,31 @@ public partial class MainWindow : Window
             });
         }
 
-        Point? lastLabel = null;
+        var labelPoints = new List<Point>();
         foreach (var group in contours.Where(contour => !contour.IsThreshold && contour.Level % 10 == 0)
                                       .GroupBy(contour => contour.Level))
         {
-            var point = _transform.ToScreen(group.First().Start);
-            if (lastLabel is { } previous && (point - previous).Length < 60)
-                continue;
+            var point = SelectLabelPoint(group, labelPoints);
             var label = new TextBlock { Text = $"{group.Key:0} m", Foreground = Brushes.Black,
                 Background = Brushes.White, FontSize = 11, Padding = new Thickness(2, 0, 2, 0) };
             Canvas.SetLeft(label, point.X + 3);
             Canvas.SetTop(label, point.Y + 3);
             DrawingCanvas.Children.Add(label);
-            lastLabel = point;
+            labelPoints.Add(point);
         }
+    }
+
+    private Point SelectLabelPoint(IEnumerable<DistanceContour> contours, IReadOnlyList<Point> placed)
+    {
+        var candidates = contours.Select(contour =>
+            {
+                var start = _transform!.ToScreen(contour.Start);
+                var end = _transform.ToScreen(contour.End);
+                return new Point((start.X + end.X) / 2, (start.Y + end.Y) / 2);
+            }).ToList();
+        Point? available = candidates.Select(contour => (Point?)contour)
+            .FirstOrDefault(candidate => placed.All(point => (candidate!.Value - point).Length >= 60));
+        return available ?? candidates[0];
     }
 
     private void AddMarker(Point center, double radius, Brush brush, string tooltip)
