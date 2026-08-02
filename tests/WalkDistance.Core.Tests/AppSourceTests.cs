@@ -137,24 +137,44 @@ public class AppSourceTests
     public void MainWindow_ContoursUseDistinctMinorAndMajorStylesWithTenMeterLabels()
     {
         string draw = ReadAppMethod("MainWindow.xaml.cs", "private void DrawContours");
+        string refreshAnalysis = ReadAppMethod("MainWindow.xaml.cs", "private void RefreshAnalysisCaches");
 
         Assert.Contains("level.Key % 10 == 0", draw);
         Assert.Contains("Brushes.DimGray", draw);
         Assert.Contains("Brushes.Black", draw);
         Assert.Contains("1.6", draw);
         Assert.Contains("0.8", draw);
-        Assert.Contains("contour.Level % 10 == 0", draw);
+        Assert.Contains("contour.Level % 10 == 0", refreshAnalysis);
         Assert.Contains("Brushes.White, 2.5", draw);
     }
 
     [Fact]
-    public void MainWindow_LabelsEveryTenMeterContourComponentUsingGridScaledTolerance()
+    public void MainWindow_CachesTenMeterContourComponentsWithGridScaledTolerance()
     {
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        string refreshAnalysis = ReadAppMethod("MainWindow.xaml.cs", "private void RefreshAnalysisCaches");
+        string refreshThreshold = ReadAppMethod("MainWindow.xaml.cs", "private void RefreshThresholdCaches");
+        string clear = ReadAppMethod("MainWindow.xaml.cs", "private void ClearAnalysisCaches");
         string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
         string draw = ReadAppMethod("MainWindow.xaml.cs", "private void DrawContours");
 
-        Assert.Contains("Math.Max(_grid.CellSize * 1e-6, 1e-9)", redraw);
-        Assert.Contains("DistanceContourAssembler.Assemble", draw);
+        Assert.Contains("IReadOnlyList<IReadOnlyList<DistanceContour>> _normalContourComponents = []", source);
+        int contours = refreshAnalysis.IndexOf("_normalContours = DistanceContourGenerator.Generate", StringComparison.Ordinal);
+        int components = refreshAnalysis.IndexOf("_normalContourComponents = DistanceContourAssembler.Assemble", StringComparison.Ordinal);
+        Assert.True(contours >= 0 && components > contours);
+        Assert.Contains("Math.Max(_grid.CellSize * 1e-6, 1e-9)", refreshAnalysis);
+        Assert.DoesNotContain("DistanceContourAssembler.Assemble", refreshThreshold);
+        Assert.Contains("_normalContourComponents = []", clear);
+        Assert.Contains("DrawContours(_normalContours, _thresholdContours, _normalContourComponents)", redraw);
+        Assert.DoesNotContain("DistanceContourAssembler.Assemble", draw);
+    }
+
+    [Fact]
+    public void MainWindow_LabelsEveryCachedTenMeterContourComponent()
+    {
+        string draw = ReadAppMethod("MainWindow.xaml.cs", "private void DrawContours");
+
+        Assert.Contains("IReadOnlyList<IReadOnlyList<DistanceContour>> normalContourComponents", draw);
         Assert.Contains("foreach (var component", draw);
         Assert.Contains("SelectLabelPoint(component", draw);
         Assert.Contains("component[0].Level", draw);

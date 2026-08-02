@@ -30,6 +30,7 @@ public partial class MainWindow : Window
     private WorldPoint? _previewEnd;
     private double? _threshold;
     private IReadOnlyList<DistanceContour> _normalContours = [];
+    private IReadOnlyList<IReadOnlyList<DistanceContour>> _normalContourComponents = [];
     private IReadOnlyList<DistanceContour> _thresholdContours = [];
     private WriteableBitmap? _heatmapBitmap;
 
@@ -546,6 +547,9 @@ public partial class MainWindow : Window
         if (_grid is null || _result is null)
             return;
         _normalContours = DistanceContourGenerator.Generate(_grid, _result.Distances);
+        _normalContourComponents = DistanceContourAssembler.Assemble(
+            _normalContours.Where(contour => contour.Level % 10 == 0).ToList(),
+            Math.Max(_grid.CellSize * 1e-6, 1e-9));
         RefreshThresholdCaches();
     }
 
@@ -562,6 +566,7 @@ public partial class MainWindow : Window
     private void ClearAnalysisCaches()
     {
         _normalContours = [];
+        _normalContourComponents = [];
         _thresholdContours = [];
         _heatmapBitmap = null;
     }
@@ -633,8 +638,7 @@ public partial class MainWindow : Window
         if (showMap && _grid is not null && _heatmapBitmap is not null)
         {
             DrawHeatmap(_grid, _heatmapBitmap);
-            DrawContours(_normalContours, _thresholdContours,
-                Math.Max(_grid.CellSize * 1e-6, 1e-9));
+            DrawContours(_normalContours, _thresholdContours, _normalContourComponents);
         }
 
         foreach (var wall in _walls)
@@ -730,7 +734,7 @@ public partial class MainWindow : Window
     private void DrawContours(
         IReadOnlyList<DistanceContour> normalContours,
         IReadOnlyList<DistanceContour> thresholdContours,
-        double componentTolerance)
+        IReadOnlyList<IReadOnlyList<DistanceContour>> normalContourComponents)
     {
         if (_transform is null)
             return;
@@ -742,8 +746,7 @@ public partial class MainWindow : Window
         AddContourPath(thresholdContours, Brushes.White, 2.5);
 
         var labelPoints = new List<Point>();
-        var labelContours = normalContours.Where(contour => contour.Level % 10 == 0).ToList();
-        foreach (var component in DistanceContourAssembler.Assemble(labelContours, componentTolerance))
+        foreach (var component in normalContourComponents)
         {
             var point = SelectLabelPoint(component, labelPoints);
             var label = new TextBlock { Text = $"{component[0].Level:0} m", Foreground = Brushes.Black,
