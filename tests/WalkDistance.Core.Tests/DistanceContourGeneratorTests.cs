@@ -54,6 +54,35 @@ public class DistanceContourGeneratorTests
     }
 
     [Fact]
+    public void SeparateApis_GenerateNormalAndThresholdGeometryIndependently()
+    {
+        var grid = WalkabilityGrid.Build(Rectangle(0, 0, 40, 4), cellSize: 1, marginCells: 0);
+        var distances = Gradient(grid, col => col);
+
+        var normal = DistanceContourGenerator.Generate(grid, distances);
+        var threshold = DistanceContourGenerator.GenerateThreshold(grid, distances, 10);
+
+        Assert.Contains(normal, contour => contour.Level == 10 && !contour.IsThreshold);
+        Assert.All(threshold, contour => Assert.True(contour.IsThreshold));
+        Assert.Contains(threshold, contour => contour.Level == 10);
+    }
+
+    [Fact]
+    public void Generate_LargeGridUsesBroadlyBoundedAllocations()
+    {
+        var grid = WalkabilityGrid.Build(Rectangle(0, 0, 500, 500), cellSize: 1, marginCells: 0);
+        var distances = Gradient(grid, col => col * 0.1);
+        _ = DistanceContourGenerator.Generate(grid, distances);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+
+        var contours = DistanceContourGenerator.Generate(grid, distances);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.NotEmpty(contours);
+        Assert.True(allocated < 32_000_000, $"Allocated {allocated:N0} bytes");
+    }
+
+    [Fact]
     public void Generate_HugeFiniteDistancesOnlyEnumeratesLocallyCrossedLevels()
     {
         var grid = WalkabilityGrid.Build(Rectangle(0, 0, 4, 4), cellSize: 1, marginCells: 0);

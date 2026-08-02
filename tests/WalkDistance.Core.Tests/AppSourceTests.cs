@@ -47,19 +47,22 @@ public class AppSourceTests
     }
 
     [Fact]
-    public void MainWindow_ThresholdEditsRedrawWithoutClearingAnalysisOrPriorValidValue()
+    public void MainWindow_ThresholdEditsValidateImmediatelyButApplyOnCommit()
     {
         string xaml = ReadAppFile("MainWindow.xaml");
         Assert.Contains("TextChanged=\"OnThresholdChanged\"", xaml);
         Assert.Contains("KeyDown=\"OnThresholdKeyDown\"", xaml);
         string changed = ReadAppMethod("MainWindow.xaml.cs", "private void OnThresholdChanged");
-        Assert.Contains("Redraw();", changed);
-        Assert.Contains("ThresholdBox.BorderBrush", changed);
+        Assert.Contains("ValidateThresholdInput", changed);
+        Assert.DoesNotContain("Redraw();", changed);
+        Assert.DoesNotContain("RefreshThresholdCaches", changed);
         Assert.DoesNotContain("InvalidateAnalysis", changed);
         Assert.DoesNotContain("_result = null", changed);
         Assert.DoesNotContain("_query", changed);
         Assert.Contains("CultureInfo.CurrentCulture", ReadAppFile("MainWindow.xaml.cs"));
         Assert.Contains("CultureInfo.InvariantCulture", ReadAppFile("MainWindow.xaml.cs"));
+        Assert.Contains("ApplyThresholdInput", ReadAppMethod("MainWindow.xaml.cs", "private void OnThresholdLostFocus"));
+        Assert.Contains("ApplyThresholdInput", ReadAppMethod("MainWindow.xaml.cs", "private void OnThresholdKeyDown"));
     }
 
     [Fact]
@@ -83,6 +86,38 @@ public class AppSourceTests
         Assert.Contains("?? candidates[0]", method);
         string draw = ReadAppMethod("MainWindow.xaml.cs", "private void DrawContours");
         Assert.Contains("SelectLabelPoint", draw);
+    }
+
+    [Fact]
+    public void MainWindow_RedrawUsesCachesWithoutRegeneratingFullMapArtifacts()
+    {
+        string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
+        Assert.DoesNotContain("DistanceContourGenerator", redraw);
+        Assert.DoesNotContain("HeatmapRenderer.Render", redraw);
+        Assert.Contains("_normalContours", redraw);
+        Assert.Contains("_thresholdContours", redraw);
+        Assert.Contains("_heatmapBitmap", redraw);
+    }
+
+    [Fact]
+    public void MainWindow_ContoursUseBatchedStreamGeometryNotOneLinePerSegment()
+    {
+        string draw = ReadAppMethod("MainWindow.xaml.cs", "private void DrawContours");
+        string batched = ReadAppMethod("MainWindow.xaml.cs", "private void AddContourPath");
+        Assert.Contains("AddContourPath", draw);
+        Assert.Contains("StreamGeometry", batched);
+        Assert.Contains("System.Windows.Shapes.Path", batched);
+        Assert.DoesNotContain("new Line", draw);
+    }
+
+    [Fact]
+    public void MainWindow_TogglesOnlyRedrawAndDoNotClearCachesOrState()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnOverlayToggleChanged");
+        Assert.Contains("Redraw();", method);
+        Assert.DoesNotContain("Cache", method);
+        Assert.DoesNotContain("_result", method);
+        Assert.DoesNotContain("_query", method);
     }
 
     [Fact]

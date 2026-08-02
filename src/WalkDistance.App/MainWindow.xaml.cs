@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using Microsoft.Win32;
 using WalkDistance.Core;
@@ -28,6 +29,9 @@ public partial class MainWindow : Window
     private IReadOnlyList<WorldPoint>? _queryPathPoints;
     private WorldPoint? _previewEnd;
     private double? _threshold;
+    private IReadOnlyList<DistanceContour> _normalContours = [];
+    private IReadOnlyList<DistanceContour> _thresholdContours = [];
+    private WriteableBitmap? _heatmapBitmap;
 
     public MainWindow()
     {
@@ -322,9 +326,13 @@ public partial class MainWindow : Window
 
     private void OnThresholdChanged(object sender, TextChangedEventArgs e)
     {
+        ValidateThresholdInput();
+    }
+
+    private void ValidateThresholdInput()
+    {
         if (TryParseThreshold(out double? threshold))
         {
-            _threshold = threshold;
             ThresholdBox.ClearValue(BorderBrushProperty);
             ThresholdBox.ToolTip = threshold is null
                 ? "기준거리 표시 꺼짐 · 숫자를 입력하면 초과 영역과 경계를 표시합니다."
@@ -335,19 +343,27 @@ public partial class MainWindow : Window
             ThresholdBox.BorderBrush = Brushes.Red;
             ThresholdBox.ToolTip = "0 이상의 유한한 숫자 또는 빈 값을 입력하세요. 이전 유효 기준은 유지됩니다.";
         }
-        if (DrawingCanvas is not null)
-            Redraw();
     }
 
-    private void OnThresholdLostFocus(object sender, RoutedEventArgs e) => OnThresholdChanged(sender, null!);
+    private void OnThresholdLostFocus(object sender, RoutedEventArgs e) => ApplyThresholdInput();
 
     private void OnThresholdKeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key == Key.Enter)
         {
-            OnThresholdChanged(sender, null!);
+            ApplyThresholdInput();
             e.Handled = true;
         }
+    }
+
+    private void ApplyThresholdInput()
+    {
+        ValidateThresholdInput();
+        if (!TryParseThreshold(out double? threshold) || threshold == _threshold)
+            return;
+        _threshold = threshold;
+        RefreshThresholdCaches();
+        Redraw();
     }
 
     private WorldPoint SnapToNearestWall(WorldPoint worldPoint, out bool snapped)
@@ -427,6 +443,7 @@ public partial class MainWindow : Window
         {
             _grid = WalkabilityGrid.Build(_walls, cellSize.Value);
             _result = null;
+            ClearAnalysisCaches();
             _farthestPathPoints = null;
             _queryPoint = null;
             _queryDistance = null;
@@ -457,6 +474,7 @@ public partial class MainWindow : Window
             }
 
             _result = DistanceMapCalculator.Compute(_grid, sources);
+            RefreshAnalysisCaches();
             _farthestPathPoints = _result.FarthestCell is { } farthest
                 ? DistanceMapCalculator.FindPath(
                     _grid,
@@ -487,6 +505,7 @@ public partial class MainWindow : Window
         {
             _grid = null;
             _result = null;
+            ClearAnalysisCaches();
             _farthestPathPoints = null;
             _queryPoint = null;
             _queryDistance = null;
@@ -519,6 +538,32 @@ public partial class MainWindow : Window
         _queryDistance = null;
         _farthestPathPoints = null;
         _queryPathPoints = null;
+        ClearAnalysisCaches();
+    }
+
+    private void RefreshAnalysisCaches()
+    {
+        if (_grid is null || _result is null)
+            return;
+        _normalContours = DistanceContourGenerator.Generate(_grid, _result.Distances);
+        RefreshThresholdCaches();
+    }
+
+    private void RefreshThresholdCaches()
+    {
+        if (_grid is null || _result is null)
+            return;
+        _thresholdContours = _threshold is { } threshold
+            ? DistanceContourGenerator.GenerateThreshold(_grid, _result.Distances, threshold)
+            : [];
+        _heatmapBitmap = HeatmapRenderer.Render(_grid, _result.Distances, _result.MaxDistance, _threshold);
+    }
+
+    private void ClearAnalysisCaches()
+    {
+        _normalContours = [];
+        _thresholdContours = [];
+        _heatmapBitmap = null;
     }
 
     private double? SelectUnitScale()
@@ -585,10 +630,10 @@ public partial class MainWindow : Window
 
         bool showMap = MapOverlayToggle.IsChecked == true;
         bool showPaths = PathOverlayToggle.IsChecked == true;
-        if (showMap && _grid is not null && _result is not null)
+        if (showMap && _grid is not null && _heatmapBitmap is not null)
         {
-            DrawHeatmap(_grid, _result);
-            DrawContours(_grid, _result);
+            DrawHeatmap(_grid, _heatmapBitmap);
+            DrawContours(_normalContours, _thresholdContours);
         }
 
         foreach (var wall in _walls)
@@ -658,14 +703,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private void DrawHeatmap(WalkabilityGrid grid, DistanceMapResult result)
+    private void DrawHeatmap(WalkabilityGrid grid, WriteableBitmap bitmap)
     {
         if (_transform is null)
         {
             return;
         }
 
-        var bitmap = HeatmapRenderer.Render(grid, result.Distances, result.MaxDistance, _threshold);
         var topLeft = _transform.ToScreen(new WorldPoint(grid.Bounds.MinX, grid.Bounds.MaxY));
         var image = new Image
         {
@@ -680,26 +724,19 @@ public partial class MainWindow : Window
         DrawingCanvas.Children.Add(image);
     }
 
-    private void DrawContours(WalkabilityGrid grid, DistanceMapResult result)
+    private void DrawContours(
+        IReadOnlyList<DistanceContour> normalContours,
+        IReadOnlyList<DistanceContour> thresholdContours)
     {
         if (_transform is null)
             return;
-        var contours = DistanceContourGenerator.Generate(grid, result.Distances, _threshold);
-        foreach (var contour in contours)
-        {
-            var start = _transform.ToScreen(contour.Start);
-            var end = _transform.ToScreen(contour.End);
-            DrawingCanvas.Children.Add(new Line
-            {
-                X1 = start.X, Y1 = start.Y, X2 = end.X, Y2 = end.Y,
-                Stroke = contour.IsThreshold ? Brushes.White : Brushes.Black,
-                StrokeThickness = contour.IsThreshold ? 2.5 : 0.8,
-            });
-        }
+        foreach (var level in normalContours.GroupBy(contour => contour.Level))
+            AddContourPath(level, Brushes.Black, 0.8);
+        AddContourPath(thresholdContours, Brushes.White, 2.5);
 
         var labelPoints = new List<Point>();
-        foreach (var group in contours.Where(contour => !contour.IsThreshold && contour.Level % 10 == 0)
-                                      .GroupBy(contour => contour.Level))
+        foreach (var group in normalContours.Where(contour => contour.Level % 10 == 0)
+                                            .GroupBy(contour => contour.Level))
         {
             var point = SelectLabelPoint(group, labelPoints);
             var label = new TextBlock { Text = $"{group.Key:0} m", Foreground = Brushes.Black,
@@ -709,6 +746,27 @@ public partial class MainWindow : Window
             DrawingCanvas.Children.Add(label);
             labelPoints.Add(point);
         }
+    }
+
+    private void AddContourPath(IEnumerable<DistanceContour> contours, Brush brush, double thickness)
+    {
+        var geometry = new StreamGeometry();
+        using (var context = geometry.Open())
+        {
+            foreach (var contour in contours)
+            {
+                context.BeginFigure(_transform!.ToScreen(contour.Start), false, false);
+                context.LineTo(_transform.ToScreen(contour.End), true, false);
+            }
+        }
+        geometry.Freeze();
+        if (!geometry.IsEmpty())
+            DrawingCanvas.Children.Add(new System.Windows.Shapes.Path
+            {
+                Data = geometry,
+                Stroke = brush,
+                StrokeThickness = thickness,
+            });
     }
 
     private Point SelectLabelPoint(IEnumerable<DistanceContour> contours, IReadOnlyList<Point> placed)
