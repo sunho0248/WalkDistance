@@ -3,10 +3,10 @@ namespace WalkDistance.Core.Tests;
 public class AppSourceTests
 {
     [Fact]
-    public void MainWindow_DefaultCellSizeIsPointOne()
+    public void MainWindow_DefaultCellSizeIsPointZeroFive()
     {
         string xaml = ReadAppFile("MainWindow.xaml");
-        Assert.Contains("x:Name=\"CellSizeBox\" Width=\"50\" Text=\"0.1\"", xaml);
+        Assert.Contains("x:Name=\"CellSizeBox\" Width=\"50\" Text=\"0.05\"", xaml);
     }
 
     [Fact]
@@ -14,6 +14,36 @@ public class AppSourceTests
     {
         string xaml = ReadAppFile("MainWindow.xaml");
         Assert.Contains("출구 모드 끔: 완료된 출구 클릭해 선택 후 Delete로 삭제", xaml);
+    }
+
+    [Fact]
+    public void MainWindow_ToolbarHint_ExplainsAutomaticShapeSnapping()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+        Assert.Contains("자동 스냅", xaml);
+    }
+
+    [Fact]
+    public void MainWindow_UsesGeometrySnapForBothClickAndPreview()
+    {
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        int clickSnapIndex = source.IndexOf("var snappedPoint = SnapToNearestWall(worldPoint);", StringComparison.Ordinal);
+        int previewSnapIndex = source.IndexOf("_previewEnd = SnapToNearestWall(_transform.ToWorld(e.GetPosition(DrawingCanvas)));", StringComparison.Ordinal);
+        int scaleUsageIndex = source.IndexOf("ExitSnapToleranceScreenPixels / _transform.Scale", StringComparison.Ordinal);
+
+        Assert.True(clickSnapIndex >= 0, "Expected committed exit clicks to snap via SnapToNearestWall.");
+        Assert.True(previewSnapIndex >= 0, "Expected the live preview point to snap via SnapToNearestWall.");
+        Assert.True(scaleUsageIndex >= 0, "Expected the screen-pixel tolerance to be converted to world units via ViewTransform.Scale.");
+    }
+
+    [Fact]
+    public void MainWindow_OpenProject_HonorsStoredCellSizeWithoutForcedDefaultOverwrite()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnOpenProject");
+
+        Assert.Contains("CellSizeBox.Text = data.CellSize.ToString(CultureInfo.InvariantCulture);", method);
+        Assert.DoesNotContain("\"0.05\"", method);
+        Assert.DoesNotContain("\"0.1\"", method);
     }
 
     [Fact]

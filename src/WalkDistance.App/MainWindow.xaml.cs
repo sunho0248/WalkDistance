@@ -12,6 +12,7 @@ namespace WalkDistance.App;
 public partial class MainWindow : Window
 {
     private const double SelectionToleranceScreenPixels = 8;
+    private const double ExitSnapToleranceScreenPixels = 12;
 
     private List<Segment> _walls = [];
     private readonly ExitLineEditor _exitEditor = new();
@@ -200,16 +201,17 @@ public partial class MainWindow : Window
         var worldPoint = _transform.ToWorld(e.GetPosition(DrawingCanvas));
         if (_addExitMode)
         {
-            if (_exitEditor.HandleLeftClick(worldPoint))
+            var snappedPoint = SnapToNearestWall(worldPoint);
+            if (_exitEditor.HandleLeftClick(snappedPoint))
             {
                 _previewEnd = null;
                 InvalidateAnalysis();
-                StatusText.Text = $"출구 {_exitEditor.Segments.Count}개 지정됨 · 우클릭: 그리기 취소";
+                StatusText.Text = $"출구 {_exitEditor.Segments.Count}개 지정됨 (벽/도형에 자동 스냅) · 우클릭: 그리기 취소";
             }
             else
             {
-                _previewEnd = worldPoint;
-                StatusText.Text = "출구 시작점 지정됨 · 끝점을 클릭하세요. 우클릭: 그리기 취소";
+                _previewEnd = snappedPoint;
+                StatusText.Text = "출구 시작점 지정됨(벽/도형에 자동 스냅) · 끝점을 클릭하세요. 우클릭: 그리기 취소";
             }
             Redraw();
             return;
@@ -285,11 +287,22 @@ public partial class MainWindow : Window
             return;
         }
 
-        _previewEnd = _transform.ToWorld(e.GetPosition(DrawingCanvas));
+        _previewEnd = SnapToNearestWall(_transform.ToWorld(e.GetPosition(DrawingCanvas)));
         Redraw();
     }
 
     private void OnCanvasSizeChanged(object sender, SizeChangedEventArgs e) => Redraw();
+
+    private WorldPoint SnapToNearestWall(WorldPoint worldPoint)
+    {
+        if (_transform is null)
+        {
+            return worldPoint;
+        }
+
+        double snapToleranceWorld = ExitSnapToleranceScreenPixels / _transform.Scale;
+        return GeometrySnap.TrySnapToNearest(worldPoint, _walls, snapToleranceWorld) ?? worldPoint;
+    }
 
     private double? ParseCellSize()
     {
