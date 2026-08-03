@@ -14,6 +14,7 @@ public partial class MainWindow : Window
 {
     private const double SelectionToleranceScreenPixels = 8;
     private const double ExitSnapToleranceScreenPixels = 12;
+    private const double ZoomStepFactor = 1.1;
 
     private List<Segment> _walls = [];
     private readonly ExitLineEditor _exitEditor = new();
@@ -22,6 +23,7 @@ public partial class MainWindow : Window
     private string? _dxfPath;
     private double _metersPerDrawingUnit = 1;
     private bool _addExitMode;
+    private bool _isFitMode = true;
     private ViewTransform? _transform;
     private WorldPoint? _queryPoint;
     private double? _queryDistance;
@@ -60,6 +62,7 @@ public partial class MainWindow : Window
             _dxfPath = dialog.FileName;
             ResetAnalysis(clearExits: true);
             StatusText.Text = $"{System.IO.Path.GetFileName(dialog.FileName)} 불러옴 · 벽 선분 {_walls.Count:N0}개 · 1 도면 단위 = {_metersPerDrawingUnit:G6} m";
+            FitView();
             Redraw();
         }
         catch (Exception ex)
@@ -141,6 +144,7 @@ public partial class MainWindow : Window
             ResetAnalysis(clearExits: true);
             _exitEditor.LoadSegments(data.Exits);
             StatusText.Text = $"프로젝트 v{data.Version} 불러옴: {System.IO.Path.GetFileName(dialog.FileName)} · 출구 {_exitEditor.Segments.Count}개";
+            FitView();
             Redraw();
         }
         catch (Exception ex)
@@ -317,7 +321,33 @@ public partial class MainWindow : Window
         Redraw();
     }
 
-    private void OnCanvasSizeChanged(object sender, SizeChangedEventArgs e) => Redraw();
+    private void OnCanvasSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (_isFitMode)
+        {
+            FitView();
+        }
+        Redraw();
+    }
+
+    private void OnCanvasMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            return;
+        }
+
+        e.Handled = true;
+        if (_transform is null)
+        {
+            return;
+        }
+
+        double factor = e.Delta > 0 ? ZoomStepFactor : 1 / ZoomStepFactor;
+        _transform = _transform.ZoomAround(e.GetPosition(DrawingCanvas), factor);
+        _isFitMode = false;
+        Redraw();
+    }
 
     private void OnOverlayToggleChanged(object sender, RoutedEventArgs e)
     {
@@ -621,6 +651,19 @@ public partial class MainWindow : Window
         return ((UnitChoice)unitBox.SelectedItem).MetersPerUnit;
     }
 
+    private void FitView()
+    {
+        _isFitMode = true;
+        if (_walls.Count == 0 || DrawingCanvas.ActualWidth <= 0 || DrawingCanvas.ActualHeight <= 0)
+        {
+            _transform = null;
+            return;
+        }
+
+        var bounds = Bounds.FromSegments(_walls);
+        _transform = ViewTransform.Build(bounds, DrawingCanvas.ActualWidth, DrawingCanvas.ActualHeight);
+    }
+
     private void Redraw()
     {
         DrawingCanvas.Children.Clear();
@@ -630,8 +673,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        var bounds = Bounds.FromSegments(_walls);
-        _transform = ViewTransform.Build(bounds, DrawingCanvas.ActualWidth, DrawingCanvas.ActualHeight);
+        if (_transform is null)
+        {
+            FitView();
+            if (_transform is null)
+            {
+                return;
+            }
+        }
 
         bool showMap = MapOverlayToggle.IsChecked == true;
         bool showPaths = PathOverlayToggle.IsChecked == true;
@@ -886,21 +935,22 @@ public partial class MainWindow : Window
 /// </summary>
 public sealed class ViewTransform
 {
-    public double Scale { get; }
-    private readonly double _offsetX;
-    private readonly double _offsetY;
-    private readonly double _canvasHeight;
-    private readonly double _minX;
-    private readonly double _minY;
+    private const double MinScaleFactor = 1e-3;
+    private const double MaxScaleFactor = 1e3;
 
-    private ViewTransform(double scale, double offsetX, double offsetY, double canvasHeight, double minX, double minY)
+    public double Scale { get; }
+    private readonly double _translateX;
+    private readonly double _translateY;
+    private readonly double _minScale;
+    private readonly double _maxScale;
+
+    private ViewTransform(double scale, double translateX, double translateY, double minScale, double maxScale)
     {
         Scale = scale;
-        _offsetX = offsetX;
-        _offsetY = offsetY;
-        _canvasHeight = canvasHeight;
-        _minX = minX;
-        _minY = minY;
+        _translateX = translateX;
+        _translateY = translateY;
+        _minScale = minScale;
+        _maxScale = maxScale;
     }
 
     public static ViewTransform Build(Bounds bounds, double canvasWidth, double canvasHeight)
@@ -917,14 +967,30 @@ public sealed class ViewTransform
         double drawnHeight = height * scale;
         double offsetX = (canvasWidth - drawnWidth) / 2;
         double offsetY = (canvasHeight - drawnHeight) / 2;
-        return new ViewTransform(scale, offsetX, offsetY, canvasHeight, bounds.MinX, bounds.MinY);
+
+        double translateX = offsetX - bounds.MinX * scale;
+        double translateY = canvasHeight - offsetY + bounds.MinY * scale;
+
+        double minScale = Math.Max(scale * MinScaleFactor, 1e-9);
+        double maxScale = scale * MaxScaleFactor;
+
+        return new ViewTransform(scale, translateX, translateY, minScale, maxScale);
+    }
+
+    public ViewTransform ZoomAround(Point screenPoint, double factor)
+    {
+        double newScale = Math.Clamp(Scale * factor, _minScale, _maxScale);
+        double appliedFactor = newScale / Scale;
+        double newTranslateX = screenPoint.X - appliedFactor * (screenPoint.X - _translateX);
+        double newTranslateY = screenPoint.Y - appliedFactor * (screenPoint.Y - _translateY);
+        return new ViewTransform(newScale, newTranslateX, newTranslateY, _minScale, _maxScale);
     }
 
     public Point ToScreen(WorldPoint point) => new(
-        _offsetX + (point.X - _minX) * Scale,
-        _canvasHeight - _offsetY - (point.Y - _minY) * Scale);
+        _translateX + point.X * Scale,
+        _translateY - point.Y * Scale);
 
     public WorldPoint ToWorld(Point point) => new(
-        _minX + (point.X - _offsetX) / Scale,
-        _minY + (_canvasHeight - _offsetY - point.Y) / Scale);
+        (point.X - _translateX) / Scale,
+        (_translateY - point.Y) / Scale);
 }

@@ -57,6 +57,7 @@
                     MouseMove="OnCanvasMouseMove"
                     MouseLeftButtonDown="OnCanvasLeftClick"
                     MouseRightButtonDown="OnCanvasRightClick"
+                    MouseWheel="OnCanvasMouseWheel"
                     KeyDown="OnCanvasKeyDown"/>
         </Border>
     </DockPanel>

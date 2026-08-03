@@ -336,6 +336,113 @@ public class AppSourceTests
         Assert.Contains("계산 중단", sizeLimit);
     }
 
+    [Fact]
+    public void MainWindow_DefaultsToFitModeOnConstruction()
+    {
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        Assert.Contains("private bool _isFitMode = true;", source);
+    }
+
+    [Fact]
+    public void MainWindow_OpenDxf_ExplicitlyFitsViewToWallBoundsBeforeRedraw()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnOpenDxf");
+        int fitIndex = method.IndexOf("FitView();", StringComparison.Ordinal);
+        int redrawIndex = method.IndexOf("Redraw();", StringComparison.Ordinal);
+        Assert.True(fitIndex >= 0, "Expected OnOpenDxf to explicitly call FitView() to reset the view to the loaded geometry.");
+        Assert.True(redrawIndex > fitIndex, "Expected FitView() to run before Redraw() so the first frame is already fitted.");
+    }
+
+    [Fact]
+    public void MainWindow_OpenProject_ExplicitlyFitsViewToWallBoundsBeforeRedraw()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnOpenProject");
+        int fitIndex = method.IndexOf("FitView();", StringComparison.Ordinal);
+        int redrawIndex = method.IndexOf("Redraw();", StringComparison.Ordinal);
+        Assert.True(fitIndex >= 0, "Expected OnOpenProject to explicitly call FitView() to reset the view to the loaded geometry.");
+        Assert.True(redrawIndex > fitIndex, "Expected FitView() to run before Redraw() so the first frame is already fitted.");
+    }
+
+    [Fact]
+    public void MainWindow_FitViewUsesWallSegmentBoundsIndependentOfAbsoluteCoordinates()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void FitView");
+        Assert.Contains("Bounds.FromSegments(_walls)", method);
+        Assert.Contains("ViewTransform.Build(bounds, DrawingCanvas.ActualWidth, DrawingCanvas.ActualHeight)", method);
+        Assert.Contains("_isFitMode = true", method);
+    }
+
+    [Fact]
+    public void MainWindow_CanvasWiresUpMouseWheelHandler()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+        Assert.Contains("MouseWheel=\"OnCanvasMouseWheel\"", xaml);
+    }
+
+    [Fact]
+    public void MainWindow_CtrlWheelZoomsAroundThePointerAndLeavesFitMode()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasMouseWheel");
+        Assert.Contains("Keyboard.Modifiers", method);
+        Assert.Contains("ModifierKeys.Control", method);
+        Assert.Contains("e.GetPosition(DrawingCanvas)", method);
+        Assert.Contains("ZoomAround", method);
+        Assert.Contains("_isFitMode = false", method);
+    }
+
+    [Fact]
+    public void MainWindow_PlainWheelWithoutCtrlIsNotConsumed()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasMouseWheel");
+        int modifierGuard = method.IndexOf("Keyboard.Modifiers", StringComparison.Ordinal);
+        int firstReturn = method.IndexOf("return;", StringComparison.Ordinal);
+        int firstHandled = method.IndexOf("e.Handled = true", StringComparison.Ordinal);
+        Assert.True(modifierGuard >= 0 && firstReturn > modifierGuard,
+            "Expected an early return guarded by the Control modifier check.");
+        Assert.True(firstHandled > firstReturn,
+            "Expected the plain-wheel path to return before the event is ever marked Handled, so non-Ctrl wheel input is left unconsumed.");
+    }
+
+    [Fact]
+    public void MainWindow_ResizeOnlyRefitsWhileInFitModePreservingManualZoom()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasSizeChanged");
+        int fitModeGuard = method.IndexOf("_isFitMode", StringComparison.Ordinal);
+        int fitViewCall = method.IndexOf("FitView();", StringComparison.Ordinal);
+        int redrawCall = method.IndexOf("Redraw();", StringComparison.Ordinal);
+        Assert.True(fitModeGuard >= 0 && fitViewCall > fitModeGuard,
+            "Expected FitView() to be gated behind an _isFitMode check so resize only refits while still in fit mode.");
+        Assert.True(redrawCall > fitViewCall);
+    }
+
+    [Fact]
+    public void MainWindow_RedrawDoesNotUnconditionallyRebuildTheTransform()
+    {
+        string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
+        Assert.DoesNotContain("ViewTransform.Build", redraw);
+        Assert.Contains("_transform is null", redraw);
+        Assert.Contains("FitView();", redraw);
+    }
+
+    [Fact]
+    public void ViewTransform_ZoomAroundClampsScaleToFiniteBounds()
+    {
+        string zoomAround = ReadAppMethod("MainWindow.xaml.cs", "public ViewTransform ZoomAround");
+        Assert.Contains("Math.Clamp", zoomAround);
+        Assert.Contains("_minScale", zoomAround);
+        Assert.Contains("_maxScale", zoomAround);
+    }
+
+    [Fact]
+    public void ViewTransform_BuildDerivesFiniteMinAndMaxScaleFromTheFitScale()
+    {
+        string build = ReadAppMethod("MainWindow.xaml.cs", "public static ViewTransform Build");
+        Assert.Contains("minScale", build);
+        Assert.Contains("maxScale", build);
+        Assert.DoesNotContain("double.PositiveInfinity", build);
+        Assert.DoesNotContain("double.NegativeInfinity", build);
+    }
+
     private static void AssertFailureClearsQuery(string source)
     {
         Assert.Contains("_result = null", source);
