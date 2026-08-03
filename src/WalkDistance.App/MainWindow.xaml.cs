@@ -941,14 +941,18 @@ public sealed class ViewTransform
     public double Scale { get; }
     private readonly double _translateX;
     private readonly double _translateY;
+    private readonly double _originX;
+    private readonly double _originY;
     private readonly double _minScale;
     private readonly double _maxScale;
 
-    private ViewTransform(double scale, double translateX, double translateY, double minScale, double maxScale)
+    private ViewTransform(double scale, double translateX, double translateY, double originX, double originY, double minScale, double maxScale)
     {
         Scale = scale;
         _translateX = translateX;
         _translateY = translateY;
+        _originX = originX;
+        _originY = originY;
         _minScale = minScale;
         _maxScale = maxScale;
     }
@@ -968,13 +972,22 @@ public sealed class ViewTransform
         double offsetX = (canvasWidth - drawnWidth) / 2;
         double offsetY = (canvasHeight - drawnHeight) / 2;
 
-        double translateX = offsetX - bounds.MinX * scale;
-        double translateY = canvasHeight - offsetY + bounds.MinY * scale;
+        // translateX/Y hold the screen position of (bounds.MinX, bounds.MinY) directly,
+        // instead of pre-multiplying bounds.Min by scale into an absolute offset. DXF
+        // drawings are often placed on a national survey grid, so bounds.Min can be many
+        // orders of magnitude larger than the drawing's own extent; folding it into a
+        // single translate and then adding it back to point*scale in ToScreen/ToWorld
+        // subtracts two near-equal huge numbers to recover a small result, which is
+        // catastrophic cancellation. Keeping an explicit origin and always computing
+        // (point - origin) before multiplying by scale avoids ever combining values of
+        // wildly different magnitude.
+        double translateX = offsetX;
+        double translateY = canvasHeight - offsetY;
 
         double minScale = Math.Max(scale * MinScaleFactor, 1e-9);
         double maxScale = scale * MaxScaleFactor;
 
-        return new ViewTransform(scale, translateX, translateY, minScale, maxScale);
+        return new ViewTransform(scale, translateX, translateY, bounds.MinX, bounds.MinY, minScale, maxScale);
     }
 
     public ViewTransform ZoomAround(Point screenPoint, double factor)
@@ -983,14 +996,14 @@ public sealed class ViewTransform
         double appliedFactor = newScale / Scale;
         double newTranslateX = screenPoint.X - appliedFactor * (screenPoint.X - _translateX);
         double newTranslateY = screenPoint.Y - appliedFactor * (screenPoint.Y - _translateY);
-        return new ViewTransform(newScale, newTranslateX, newTranslateY, _minScale, _maxScale);
+        return new ViewTransform(newScale, newTranslateX, newTranslateY, _originX, _originY, _minScale, _maxScale);
     }
 
     public Point ToScreen(WorldPoint point) => new(
-        _translateX + point.X * Scale,
-        _translateY - point.Y * Scale);
+        _translateX + (point.X - _originX) * Scale,
+        _translateY - (point.Y - _originY) * Scale);
 
     public WorldPoint ToWorld(Point point) => new(
-        (point.X - _translateX) / Scale,
-        (_translateY - point.Y) / Scale);
+        _originX + (point.X - _translateX) / Scale,
+        _originY + (_translateY - point.Y) / Scale);
 }
