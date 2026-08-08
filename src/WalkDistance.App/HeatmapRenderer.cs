@@ -36,7 +36,7 @@ public static class HeatmapRenderer
             {
                 int idx = (bitmapRow * width + col) * 4;
                 double d = distances[gridRow, col];
-                if (!grid.IsWalkable(col, gridRow) || double.IsPositiveInfinity(d) || maxDistance <= 0)
+                if (!grid.IsWalkable(col, gridRow) || double.IsPositiveInfinity(d))
                 {
                     continue; // leave fully transparent
                 }

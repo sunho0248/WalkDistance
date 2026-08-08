@@ -80,7 +80,7 @@ public class AppSourceTests
     [Fact]
     public void MainWindow_InvalidThresholdCalculationDoesNotInvalidateExistingAnalysis()
     {
-        string calculate = ReadAppMethod("MainWindow.xaml.cs", "private void OnCalculate");
+        string calculate = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
         int thresholdGuard = calculate.IndexOf("TryParseThreshold", StringComparison.Ordinal);
         int buildGrid = calculate.IndexOf("WalkabilityGrid.Build", StringComparison.Ordinal);
         Assert.True(thresholdGuard >= 0 && thresholdGuard < buildGrid);
@@ -192,10 +192,55 @@ public class AppSourceTests
     }
 
     [Fact]
-    public void MainWindow_DefaultCellSizeIsPointZeroFive()
+    public void MainWindow_DefaultCellSizeIsPointTwoMeters()
     {
         string xaml = ReadAppFile("MainWindow.xaml");
-        Assert.Contains("x:Name=\"CellSizeBox\" Width=\"50\" Text=\"0.05\"", xaml);
+        Assert.Contains("x:Name=\"CellSizeBox\" Width=\"50\" Text=\"0.2\"", xaml);
+    }
+
+    [Fact]
+    public void MainWindow_CalculationRunsFourVisibleBackgroundPhasesAndPreventsDuplicates()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        string calculate = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
+
+        Assert.Contains("x:Name=\"CalculationProgress\"", xaml);
+        Assert.Contains("Maximum=\"4\"", xaml);
+        Assert.Contains("private bool _isCalculating;", source);
+        Assert.Contains("if (_isCalculating)", calculate);
+        Assert.Contains("CalculateButton.IsEnabled = false", calculate);
+        Assert.Contains("Dispatcher.Yield", calculate);
+        Assert.Equal(4, calculate.Split("Task.Run").Length - 1);
+        Assert.Contains("격자 생성 중", calculate);
+        Assert.Contains("출구 소스 생성 중", calculate);
+        Assert.Contains("보행거리 계산 중", calculate);
+        Assert.Contains("결과 렌더링 중", calculate);
+    }
+
+    [Fact]
+    public void MainWindow_CalculationAlwaysRestoresButtonAndReportsUnexpectedErrors()
+    {
+        string calculate = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
+
+        Assert.Contains("catch (Exception ex)", calculate);
+        Assert.Contains("ex.Message", calculate);
+        Assert.Contains("finally", calculate);
+        Assert.Contains("CalculateButton.IsEnabled = true", calculate);
+        Assert.Contains("CalculationProgress.Visibility = Visibility.Collapsed", calculate);
+        Assert.Contains("_isCalculating = false", calculate);
+    }
+
+    [Fact]
+    public void MainWindow_MapOnlyModeDoesNotDrawPathStartOrQueryMarkers()
+    {
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        string redraw = Slice(source, "private void Redraw", "private void DrawHeatmap");
+        string pathOverlay = redraw[redraw.IndexOf("if (showPaths)", StringComparison.Ordinal)..];
+
+        Assert.Contains("                AddMarker(point, 8, Brushes.Red", pathOverlay);
+        Assert.Contains("            if (_queryPoint is { } queryPoint)", pathOverlay);
+        Assert.DoesNotContain("AddMarker(point, 8, Brushes.Red", redraw[..redraw.IndexOf("if (showPaths)", StringComparison.Ordinal)]);
     }
 
     [Fact]
@@ -307,11 +352,11 @@ public class AppSourceTests
     [Fact]
     public void MainWindow_CalculateUsesEveryConsecutiveExitPathSegment()
     {
-        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCalculate");
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
 
         Assert.Contains("_exitEditor.Paths", method);
         Assert.Contains(".Zip(path.Skip(1), (start, end) => new Segment(start, end))", method);
-        Assert.Contains("WalkableSourcesNearSegment(exit, _grid.CellSize, exitGroupId)", method);
+        Assert.Contains("WalkableSourcesNearSegment(exit, grid.CellSize, exitGroupId)", method);
     }
 
     [Fact]
@@ -447,6 +492,7 @@ public class AppSourceTests
         Assert.Contains("CellSizeBox.Text = data.CellSize.ToString(CultureInfo.InvariantCulture);", method);
         Assert.DoesNotContain("\"0.05\"", method);
         Assert.DoesNotContain("\"0.1\"", method);
+        Assert.DoesNotContain("\"0.2\"", method);
     }
 
     [Fact]
@@ -509,7 +555,7 @@ public class AppSourceTests
     public void MainWindow_SuccessfulCalculation_ReportsUnreachableCellsOnlyInStatusText()
     {
         string source = ReadAppFile("MainWindow.xaml.cs");
-        string success = Slice(source, "_result = DistanceMapCalculator.Compute", "catch (GridSizeLimitExceededException ex)");
+        string success = Slice(source, "_result = await Task.Run", "catch (GridSizeLimitExceededException ex)");
 
         Assert.Contains("_result.UnreachableCellCount > 0", success);
         Assert.Contains("StatusText.Text +=", success);
@@ -563,10 +609,10 @@ public class AppSourceTests
     public void MainWindow_CalculationFailuresClearStaleAnalysisAndShowKoreanGuidance()
     {
         string source = ReadAppFile("MainWindow.xaml.cs");
-        string preFailureClear = Slice(source, "_grid = WalkabilityGrid.Build", "if (_grid.InteriorCellCount == 0)");
+        string preFailureClear = Slice(source, "_grid = await Task.Run", "if (_grid.InteriorCellCount == 0)");
         string openOutline = Slice(source, "if (_grid.InteriorCellCount == 0)", "var sources =");
-        string noExit = Slice(source, "if (sources.Count == 0)", "_result = DistanceMapCalculator.Compute");
-        string sizeLimit = Slice(source, "catch (GridSizeLimitExceededException ex)", "private void ResetAnalysis");
+        string noExit = Slice(source, "if (sources.Count == 0)", "_result = await Task.Run");
+        string sizeLimit = Slice(source, "catch (GridSizeLimitExceededException ex)", "catch (Exception ex)");
 
         AssertFailureClearsQuery(preFailureClear);
         Assert.Contains("닫힌 건물 외곽선", openOutline);

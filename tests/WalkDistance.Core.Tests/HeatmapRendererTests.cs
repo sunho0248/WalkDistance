@@ -7,6 +7,31 @@ namespace WalkDistance.Core.Tests;
 public class HeatmapRendererTests
 {
     [Fact]
+    public void Render_IncludesZeroDistanceSourceCellWhenMaximumIsZero()
+    {
+        var grid = WalkabilityGrid.Build(
+        [
+            new(new(0, 0), new(1, 0)),
+            new(new(1, 0), new(1, 1)),
+            new(new(1, 1), new(0, 1)),
+            new(new(0, 1), new(0, 0)),
+        ], cellSize: 0.25, marginCells: 1);
+        var source = (from row in Enumerable.Range(0, grid.Rows)
+                      from col in Enumerable.Range(0, grid.Cols)
+                      where grid.IsWalkable(col, row)
+                      select (Col: col, Row: row)).First();
+        var distances = new double[grid.Rows, grid.Cols];
+        for (int row = 0; row < grid.Rows; row++)
+        for (int col = 0; col < grid.Cols; col++)
+            distances[row, col] = double.PositiveInfinity;
+        distances[source.Row, source.Col] = 0;
+
+        var bitmap = HeatmapRenderer.Render(grid, distances, maxDistance: 0);
+
+        Assert.Equal(170, Pixel(bitmap, grid, source)[3]);
+    }
+
+    [Fact]
     public void Render_UsesSolidFiveMeterBandsAndPreservesThresholdOverlay()
     {
         var grid = WalkabilityGrid.Build(

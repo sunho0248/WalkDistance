@@ -23,6 +23,10 @@
             <StatusBarItem>
                 <TextBlock x:Name="StatusText" Text="DXF 파일을 불러오세요."/>
             </StatusBarItem>
+            <StatusBarItem>
+                <ProgressBar x:Name="CalculationProgress" Width="140" Height="14"
+                             Minimum="0" Maximum="4" Visibility="Collapsed"/>
+            </StatusBarItem>
         </StatusBar>
 
         <ToolBarTray DockPanel.Dock="Top">
@@ -36,7 +40,7 @@
                          ToolTip="비우면 두 번 클릭하는 직선 출구 · 값을 입력하면 마우스 위치가 중심인 전체 길이를 벽 따라 실시간 미리보기 · 클릭하면 미리보기 그대로 확정"/>
                 <Separator/>
                 <TextBlock Text="셀 크기(m):" VerticalAlignment="Center" Margin="4,0"/>
-                <TextBox x:Name="CellSizeBox" Width="50" Text="0.05" VerticalAlignment="Center"/>
+                <TextBox x:Name="CellSizeBox" Width="50" Text="0.2" VerticalAlignment="Center"/>
                 <Separator/>
                 <TextBlock Text="기준거리(m):" VerticalAlignment="Center" Margin="4,0"/>
                 <TextBox x:Name="ThresholdBox" Width="55" VerticalAlignment="Center"

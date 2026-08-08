@@ -44,6 +44,7 @@ public partial class MainWindow : Window
     private IReadOnlyList<IReadOnlyList<DistanceContour>> _normalContourComponents = [];
     private IReadOnlyList<DistanceContour> _thresholdContours = [];
     private WriteableBitmap? _heatmapBitmap;
+    private bool _isCalculating;
 
     public MainWindow()
     {
@@ -599,8 +600,12 @@ public partial class MainWindow : Window
         return false;
     }
 
-    private void OnCalculate(object sender, RoutedEventArgs e)
+    private async void OnCalculate(object sender, RoutedEventArgs e)
     {
+        if (_isCalculating)
+        {
+            return;
+        }
         if (_walls.Count == 0)
         {
             InvalidateAnalysis();
@@ -631,9 +636,17 @@ public partial class MainWindow : Window
             return;
         }
 
+        var walls = _walls.ToArray();
+        var exitPaths = _exitEditor.Paths.Select(path => path.ToArray()).ToArray();
+        _isCalculating = true;
+        CalculateButton.IsEnabled = false;
+        CalculationProgress.Visibility = Visibility.Visible;
         try
         {
-            _grid = WalkabilityGrid.Build(_walls, cellSize.Value);
+            CalculationProgress.Value = 1;
+            StatusText.Text = "1/4 · 격자 생성 중...";
+            await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
+            _grid = await Task.Run(() => WalkabilityGrid.Build(walls, cellSize.Value));
             _result = null;
             ClearAnalysisCaches();
             _farthestPathPoints = null;
@@ -652,12 +665,16 @@ public partial class MainWindow : Window
                 Redraw();
                 return;
             }
-            var sources = _exitEditor.Paths
+            CalculationProgress.Value = 2;
+            StatusText.Text = "2/4 · 출구 소스 생성 중...";
+            await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
+            var grid = _grid;
+            var sources = await Task.Run(() => exitPaths
                 .SelectMany((path, exitGroupId) => path
                     .Zip(path.Skip(1), (start, end) => new Segment(start, end))
                     .SelectMany(exit =>
-                        _grid.WalkableSourcesNearSegment(exit, _grid.CellSize, exitGroupId)))
-                .ToList();
+                        grid.WalkableSourcesNearSegment(exit, grid.CellSize, exitGroupId)))
+                .ToList());
             if (sources.Count == 0)
             {
                 _grid = null;
@@ -667,14 +684,40 @@ public partial class MainWindow : Window
                 return;
             }
 
-            _result = DistanceMapCalculator.Compute(_grid, sources);
-            RefreshAnalysisCaches();
-            _farthestPathPoints = _result.FarthestCell is { } farthest
-                ? DistanceMapCalculator.FindPath(
-                    _grid,
-                    _result,
-                    _grid.CellCenter(farthest.Col, farthest.Row))?.Points
-                : null;
+            CalculationProgress.Value = 3;
+            StatusText.Text = "3/4 · 보행거리 계산 중...";
+            await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
+            _result = await Task.Run(() => DistanceMapCalculator.Compute(grid, sources));
+
+            CalculationProgress.Value = 4;
+            StatusText.Text = "4/4 · 결과 렌더링 중...";
+            await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
+            var result = _result;
+            var artifacts = await Task.Run(() =>
+            {
+                var normalContours = DistanceContourGenerator.Generate(grid, result.Distances);
+                var normalContourComponents = DistanceContourAssembler.Assemble(
+                    normalContours.Where(contour => contour.Level % 10 == 0).ToList(),
+                    Math.Max(grid.CellSize * 1e-6, 1e-9));
+                var thresholdContours = threshold is { } limit
+                    ? DistanceContourGenerator.GenerateThreshold(grid, result.Distances, limit)
+                    : [];
+                var heatmapBitmap = HeatmapRenderer.Render(
+                    grid, result.Distances, result.MaxDistance, threshold);
+                var farthestPathPoints = result.FarthestCell is { } farthest
+                    ? DistanceMapCalculator.FindPath(
+                        grid,
+                        result,
+                        grid.CellCenter(farthest.Col, farthest.Row))?.Points
+                    : null;
+                return (normalContours, normalContourComponents, thresholdContours,
+                    heatmapBitmap, farthestPathPoints);
+            });
+            _normalContours = artifacts.normalContours;
+            _normalContourComponents = artifacts.normalContourComponents;
+            _thresholdContours = artifacts.thresholdContours;
+            _heatmapBitmap = artifacts.heatmapBitmap;
+            _farthestPathPoints = artifacts.farthestPathPoints;
             AddExitToggle.IsChecked = false;
             _queryPoint = null;
             _queryDistance = null;
@@ -705,6 +748,21 @@ public partial class MainWindow : Window
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
             StatusText.Text = "계산 중단: 셀 크기를 키워 격자 셀 수를 줄이세요.";
+            Redraw();
+        }
+        catch (Exception ex)
+        {
+            InvalidateAnalysis();
+            StatusText.Text = $"계산 실패: {ex.Message}";
+            MessageBox.Show(this, $"보행거리 계산 실패: {ex.Message}", "오류",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            Redraw();
+        }
+        finally
+        {
+            CalculationProgress.Visibility = Visibility.Collapsed;
+            CalculateButton.IsEnabled = true;
+            _isCalculating = false;
         }
     }
 
@@ -905,21 +963,21 @@ public partial class MainWindow : Window
             AddPath(_queryPathPoints, Brushes.DeepSkyBlue, 2.5);
             var farthestLabelPosition = AddPathLabel(_farthestPathPoints, _result?.MaxDistance, Brushes.OrangeRed);
             AddPathLabel(_queryPathPoints, _queryDistance, Brushes.DeepSkyBlue, farthestLabelPosition);
-        }
 
-        if (_grid is not null && _result?.FarthestCell is { } farthest)
-        {
-            var point = _transform.ToScreen(_grid.CellCenter(farthest.Col, farthest.Row));
-            AddMarker(point, 8, Brushes.Red, $"최대 보행거리 지점 ({_result.MaxDistance:F2} m)");
-        }
+            if (_grid is not null && _result?.FarthestCell is { } farthest)
+            {
+                var point = _transform.ToScreen(_grid.CellCenter(farthest.Col, farthest.Row));
+                AddMarker(point, 8, Brushes.Red, $"최대 보행거리 지점 ({_result.MaxDistance:F2} m)");
+            }
 
-        if (_queryPoint is { } queryPoint)
-        {
-            string tooltip = _queryDistance is { } distance
-                ? $"선택 지점 ({distance:F2} m)"
-                : "도달 불가능 또는 벽";
-            AddMarker(_transform.ToScreen(queryPoint), 5,
-                _queryDistance is null ? Brushes.Gray : Brushes.DeepSkyBlue, tooltip);
+            if (_queryPoint is { } queryPoint)
+            {
+                string tooltip = _queryDistance is { } distance
+                    ? $"선택 지점 ({distance:F2} m)"
+                    : "도달 불가능 또는 벽";
+                AddMarker(_transform.ToScreen(queryPoint), 5,
+                    _queryDistance is null ? Brushes.Gray : Brushes.DeepSkyBlue, tooltip);
+            }
         }
     }
 
