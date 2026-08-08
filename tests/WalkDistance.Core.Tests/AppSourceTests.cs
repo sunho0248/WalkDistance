@@ -294,6 +294,17 @@ public class AppSourceTests
     }
 
     [Fact]
+    public void MainWindow_ExitLabelsAndTooltipsUseCurrentListIndex()
+    {
+        string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
+
+        Assert.Contains("string exitName = $\"EXIT {i + 1}\";", redraw);
+        Assert.Contains("Text = exitName", redraw);
+        Assert.Contains("ToolTip = exitTooltip", redraw);
+        Assert.DoesNotContain("$\"출구 {i + 1}번", redraw);
+    }
+
+    [Fact]
     public void MainWindow_CalculateUsesEveryConsecutiveExitPathSegment()
     {
         string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCalculate");
@@ -511,6 +522,16 @@ public class AppSourceTests
         string source = ReadAppFile("HeatmapRenderer.cs");
 
         Assert.Contains("!grid.IsWalkable(col, gridRow)", source);
+    }
+
+    [Fact]
+    public void HeatmapRenderer_HasNoContinuousGradientOrInterpolation()
+    {
+        string source = ReadAppFile("HeatmapRenderer.cs");
+
+        Assert.Contains("Math.Floor(d / 5)", source);
+        Assert.DoesNotContain("Gradient(", source);
+        Assert.DoesNotContain("Lerp(", source);
     }
 
     [Fact]

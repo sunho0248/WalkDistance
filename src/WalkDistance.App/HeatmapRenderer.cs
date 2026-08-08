@@ -6,11 +6,22 @@ using WalkDistance.Core;
 namespace WalkDistance.App;
 
 /// <summary>
-/// Rasterizes a distance map into a semi-transparent heatmap bitmap
-/// (blue = near an exit, red = far from every exit).
+/// Rasterizes a distance map into semi-transparent, solid 5 m color bands.
 /// </summary>
 public static class HeatmapRenderer
 {
+    private static readonly (byte R, byte G, byte B)[] DistanceBandColors =
+    [
+        (0, 80, 255),
+        (0, 180, 255),
+        (0, 190, 100),
+        (150, 205, 0),
+        (245, 215, 0),
+        (255, 145, 0),
+        (235, 70, 35),
+        (200, 25, 30),
+    ];
+
     public static WriteableBitmap Render(WalkabilityGrid grid, double[,] distances, double maxDistance, double? threshold = null)
     {
         int width = grid.Cols;
@@ -30,10 +41,13 @@ public static class HeatmapRenderer
                     continue; // leave fully transparent
                 }
 
-                double t = Math.Clamp(d / maxDistance, 0, 1);
+                int band = Math.Max(0, (int)Math.Floor(d / 5));
+                int colorIndex = band < DistanceBandColors.Length
+                    ? band
+                    : DistanceBandColors.Length - 2 + band % 2;
                 var (r, g, b) = threshold is { } limit && d > limit
                     ? ((byte)190, (byte)35, (byte)210)
-                    : Gradient(t);
+                    : DistanceBandColors[colorIndex];
                 pixels[idx + 0] = b;
                 pixels[idx + 1] = g;
                 pixels[idx + 2] = r;
@@ -46,31 +60,4 @@ public static class HeatmapRenderer
         return bitmap;
     }
 
-    private static (byte R, byte G, byte B) Gradient(double t)
-    {
-        (double R, double G, double B) blue = (0, 0, 1);
-        (double R, double G, double B) green = (0, 1, 0);
-        (double R, double G, double B) yellow = (1, 1, 0);
-        (double R, double G, double B) red = (1, 0, 0);
-
-        if (t < 1.0 / 3)
-        {
-            return Lerp(blue, green, t / (1.0 / 3));
-        }
-
-        if (t < 2.0 / 3)
-        {
-            return Lerp(green, yellow, (t - 1.0 / 3) / (1.0 / 3));
-        }
-
-        return Lerp(yellow, red, (t - 2.0 / 3) / (1.0 / 3));
-    }
-
-    private static (byte R, byte G, byte B) Lerp((double R, double G, double B) a, (double R, double G, double B) b, double t)
-    {
-        return (
-            (byte)((a.R + (b.R - a.R) * t) * 255),
-            (byte)((a.G + (b.G - a.G) * t) * 255),
-            (byte)((a.B + (b.B - a.B) * t) * 255));
-    }
 }

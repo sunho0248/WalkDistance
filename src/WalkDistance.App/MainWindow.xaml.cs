@@ -859,13 +859,36 @@ public partial class MainWindow : Window
             var path = _exitEditor.Paths[i];
             bool isSelected = _exitEditor.SelectedIndex == i;
             var brush = isSelected ? Brushes.DodgerBlue : Brushes.LimeGreen;
+            string exitName = $"EXIT {i + 1}";
+            string exitTooltip = isSelected ? $"{exitName} (선택됨)" : exitName;
             DrawingCanvas.Children.Add(new Polyline
             {
                 Points = new PointCollection(path.Select(_transform.ToScreen)),
                 Stroke = brush,
                 StrokeThickness = isSelected ? 5 : 3,
-                ToolTip = isSelected ? $"출구 {i + 1}번 (선택됨)" : $"출구 {i + 1}번",
+                ToolTip = exitTooltip,
             });
+            var anchor = _transform.ToScreen(LabelPlacement.HalfLengthPoint(path));
+            var label = new TextBlock
+            {
+                Text = exitName,
+                Foreground = brush,
+                Background = Brushes.White,
+                FontWeight = FontWeights.SemiBold,
+                Padding = new Thickness(2, 0, 2, 0),
+                ToolTip = exitTooltip,
+            };
+            label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            var labelPosition = LabelPlacement.ClampToCanvas(
+                new WorldPoint(anchor.X + 6, anchor.Y + 6),
+                label.DesiredSize.Width,
+                label.DesiredSize.Height,
+                DrawingCanvas.ActualWidth,
+                DrawingCanvas.ActualHeight,
+                padding: 4);
+            Canvas.SetLeft(label, labelPosition.X);
+            Canvas.SetTop(label, labelPosition.Y);
+            DrawingCanvas.Children.Add(label);
             AddMarker(_transform.ToScreen(path[0]), isSelected ? 5 : 4, brush, "출구 시작점");
             AddMarker(_transform.ToScreen(path[^1]), isSelected ? 5 : 4, brush, "출구 끝점");
         }
