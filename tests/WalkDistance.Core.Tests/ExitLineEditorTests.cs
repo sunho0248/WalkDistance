@@ -157,6 +157,59 @@ public class ExitLineEditorTests
     }
 
     [Fact]
+    public void HandleLeftClick_TracedRoute_CommitsFullPathAndChordSegment()
+    {
+        var editor = new ExitLineEditor();
+        var start = new WorldPoint(0, 0);
+        var route = new[] { start, new WorldPoint(5, 0), new WorldPoint(5, 3) };
+        editor.HandleLeftClick(start);
+
+        Assert.True(editor.HandleLeftClick(route));
+
+        Assert.Equal(ExitDrawState.Idle, editor.State);
+        Assert.Equal(new Segment(start, new WorldPoint(5, 3)), Assert.Single(editor.Segments));
+        Assert.Equal(route, Assert.Single(editor.Paths));
+    }
+
+    [Fact]
+    public void HandleLeftClick_TracedRoute_WithoutPendingStart_NoOps()
+    {
+        var editor = new ExitLineEditor();
+        var route = new[] { new WorldPoint(0, 0), new WorldPoint(5, 0) };
+
+        Assert.False(editor.HandleLeftClick(route));
+        Assert.Empty(editor.Paths);
+    }
+
+    [Fact]
+    public void HandleLeftClick_TracedRoute_TooShort_NoOpsAndKeepsPending()
+    {
+        var editor = new ExitLineEditor();
+        var start = new WorldPoint(0, 0);
+        editor.HandleLeftClick(start);
+
+        Assert.False(editor.HandleLeftClick(new[] { start }));
+
+        Assert.Equal(ExitDrawState.AwaitingSecondPoint, editor.State);
+        Assert.Equal(start, editor.PendingStart);
+        Assert.Empty(editor.Paths);
+    }
+
+    [Fact]
+    public void HandleLeftClick_TracedRoute_ClearsExistingSelection()
+    {
+        var editor = new ExitLineEditor();
+        editor.HandleLeftClick(new WorldPoint(0, 0));
+        editor.HandleLeftClick(new WorldPoint(1, 0));
+        Assert.True(editor.TrySelectNear(new WorldPoint(0.5, 0), 0.1));
+
+        editor.HandleLeftClick(new WorldPoint(10, 10));
+        editor.HandleLeftClick(new[] { new WorldPoint(10, 10), new WorldPoint(11, 10) });
+
+        Assert.Null(editor.SelectedIndex);
+    }
+
+    [Fact]
     public void LoadSegments_ReplacesSegmentsCancelsPendingAndClearsSelection()
     {
         var editor = new ExitLineEditor();
@@ -172,5 +225,42 @@ public class ExitLineEditorTests
         Assert.Equal(segments, editor.Segments);
         Assert.Equal(ExitDrawState.Idle, editor.State);
         Assert.Null(editor.SelectedIndex);
+    }
+
+    [Fact]
+    public void LoadPaths_RestoresEveryRoutePoint()
+    {
+        var editor = new ExitLineEditor();
+        IReadOnlyList<WorldPoint> route =
+        [
+            new WorldPoint(0, 0),
+            new WorldPoint(4, 0),
+            new WorldPoint(4, 3),
+        ];
+
+        editor.LoadPaths([route]);
+
+        Assert.Equal(route, Assert.Single(editor.Paths));
+        Assert.Equal(new Segment(route[0], route[^1]), Assert.Single(editor.Segments));
+    }
+
+    [Fact]
+    public void TryRelocateSelected_SnapsAndRetracesSameLengthInOriginalDirection()
+    {
+        var walls = WallIndex.Build(
+        [
+            new Segment(new WorldPoint(0, 0), new WorldPoint(10, 0)),
+            new Segment(new WorldPoint(10, 0), new WorldPoint(10, 10)),
+        ]);
+        var editor = new ExitLineEditor();
+        editor.LoadPaths([[new WorldPoint(2, 0), new WorldPoint(7, 0)]]);
+        Assert.True(editor.TrySelectNear(new WorldPoint(4, 0), 0.1));
+
+        Assert.True(editor.TryRelocateSelected(walls, new WorldPoint(8, 0.2), 0.5));
+
+        Assert.Equal(
+            [new WorldPoint(8, 0), new WorldPoint(10, 0), new WorldPoint(10, 3)],
+            Assert.Single(editor.Paths));
+        Assert.Equal(0, editor.SelectedIndex);
     }
 }

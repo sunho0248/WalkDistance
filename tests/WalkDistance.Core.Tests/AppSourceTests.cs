@@ -213,16 +213,17 @@ public class AppSourceTests
     }
 
     [Fact]
-    public void MainWindow_UsesGeometrySnapForBothClickAndPreview()
+    public void MainWindow_UsesWallIndexForBothClickAndPreviewSnapping()
     {
         string source = ReadAppFile("MainWindow.xaml.cs");
         int clickSnapIndex = source.IndexOf("var snappedPoint = SnapToNearestWall(worldPoint, out bool snapped);", StringComparison.Ordinal);
-        int previewSnapIndex = source.IndexOf("_previewEnd = SnapToNearestWall(_transform.ToWorld(e.GetPosition(DrawingCanvas)), out _);", StringComparison.Ordinal);
+        int previewSnapIndex = source.IndexOf("SnapToNearestWall(worldPoint, out _)", StringComparison.Ordinal);
         int scaleUsageIndex = source.IndexOf("ExitSnapToleranceScreenPixels / _transform.Scale", StringComparison.Ordinal);
 
         Assert.True(clickSnapIndex >= 0, "Expected committed exit clicks to snap via SnapToNearestWall with an out-bool snapped seam.");
         Assert.True(previewSnapIndex >= 0, "Expected the live preview point to snap via SnapToNearestWall.");
         Assert.True(scaleUsageIndex >= 0, "Expected the screen-pixel tolerance to be converted to world units via ViewTransform.Scale.");
+        Assert.Contains("private WallIndex _wallIndex = WallIndex.Build([]);", source);
     }
 
     [Fact]
@@ -231,12 +232,164 @@ public class AppSourceTests
         string method = ReadAppMethod("MainWindow.xaml.cs", "private WorldPoint SnapToNearestWall");
 
         Assert.Contains("out bool snapped", method);
-        Assert.Contains("GeometrySnap.TrySnapToNearest(worldPoint, _walls, snapToleranceWorld)", method);
+        Assert.Contains("_wallIndex.TrySnapToNearest(worldPoint, SnapToleranceWorld())", method);
         // Only one nearest-point calculation: the out-bool is derived from its result, not a duplicate call.
         int firstCallIndex = method.IndexOf("TrySnapToNearest", StringComparison.Ordinal);
         int secondCallIndex = method.IndexOf("TrySnapToNearest", firstCallIndex + 1, StringComparison.Ordinal);
-        Assert.True(firstCallIndex >= 0, "Expected SnapToNearestWall to call GeometrySnap.TrySnapToNearest.");
+        Assert.True(firstCallIndex >= 0, "Expected SnapToNearestWall to call the WallIndex spatial snap.");
         Assert.Equal(-1, secondCallIndex);
+    }
+
+    [Fact]
+    public void MainWindow_WallIndexIsRebuiltOnlyWhenWallsLoadNotOnEveryPreview()
+    {
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        int wallsAssignIndex = source.IndexOf("_walls = document.Walls.ToList();", StringComparison.Ordinal);
+        int wallIndexBuildIndex = source.IndexOf("_wallIndex = WallIndex.Build(_walls);", wallsAssignIndex, StringComparison.Ordinal);
+        Assert.True(wallsAssignIndex >= 0 && wallIndexBuildIndex > wallsAssignIndex,
+            "Expected the WallIndex to be rebuilt right after walls load in OnOpenDxf.");
+
+        int openProjectWallsAssign = source.IndexOf("_walls = data.Walls.ToList();", StringComparison.Ordinal);
+        int openProjectWallIndexBuild = source.IndexOf("_wallIndex = WallIndex.Build(_walls);", openProjectWallsAssign, StringComparison.Ordinal);
+        Assert.True(openProjectWallsAssign >= 0 && openProjectWallIndexBuild > openProjectWallsAssign,
+            "Expected the WallIndex to be rebuilt right after walls load in OnOpenProject.");
+
+        // "no static wall rebuild during previews": the only two WallIndex.Build
+        // call sites in the whole file are the two load paths asserted above.
+        Assert.Equal(2, source.Split("WallIndex.Build(_walls)").Length - 1);
+        string mouseMove = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasMouseMove");
+        string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
+        Assert.DoesNotContain("WallIndex.Build", mouseMove);
+        Assert.DoesNotContain("WallIndex.Build", redraw);
+    }
+
+    [Fact]
+    public void MainWindow_WallsCacheImmutableGeometryOnLoadAndOnlyTransformItOnRedraw()
+    {
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
+        string cacheWalls = ReadAppMethod("MainWindow.xaml.cs", "private void CacheWallGeometry");
+        string drawWalls = ReadAppMethod("MainWindow.xaml.cs", "private void DrawWalls");
+        Assert.Contains("DrawWalls();", redraw);
+        Assert.Contains("new StreamGeometry", cacheWalls);
+        Assert.Contains("geometry.Freeze();", cacheWalls);
+        Assert.Contains("_wallPath.Data = geometry;", cacheWalls);
+        Assert.Contains("_wallPath.RenderTransform = new MatrixTransform", drawWalls);
+        Assert.DoesNotContain("new StreamGeometry", drawWalls);
+        Assert.DoesNotContain("foreach (var wall in _walls)", drawWalls);
+        Assert.Equal(2, source.Split("CacheWallGeometry();").Length - 1);
+        Assert.True(source.IndexOf("CacheWallGeometry();", source.IndexOf("_walls = document.Walls.ToList();", StringComparison.Ordinal), StringComparison.Ordinal) >= 0);
+        Assert.True(source.IndexOf("CacheWallGeometry();", source.IndexOf("_walls = data.Walls.ToList();", StringComparison.Ordinal), StringComparison.Ordinal) >= 0);
+        Assert.DoesNotContain("new Line", redraw);
+        Assert.DoesNotContain("new Line", drawWalls);
+    }
+
+    [Fact]
+    public void MainWindow_ExitPathsRenderTheFullTracedRouteNotJustTheChord()
+    {
+        string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
+        Assert.Contains("_exitEditor.Paths.Count", redraw);
+        Assert.Contains("new Polyline", redraw);
+        Assert.DoesNotContain("new Line", redraw);
+    }
+
+    [Fact]
+    public void MainWindow_CalculateUsesEveryConsecutiveExitPathSegment()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCalculate");
+
+        Assert.Contains("_exitEditor.Paths", method);
+        Assert.Contains(".Zip(path.Skip(1), (start, end) => new Segment(start, end))", method);
+        Assert.Contains("WalkableSourcesNearSegment(exit, _grid.CellSize, exitGroupId)", method);
+    }
+
+    [Fact]
+    public void MainWindow_ProjectSaveAndLoadUseFullExitPaths()
+    {
+        string save = ReadAppMethod("MainWindow.xaml.cs", "private void OnSaveProject");
+        string load = ReadAppMethod("MainWindow.xaml.cs", "private void OnOpenProject");
+
+        Assert.Contains("ExitPaths: _exitEditor.Paths", save);
+        Assert.DoesNotContain("_exitEditor.Segments", save);
+        Assert.Contains("_exitEditor.LoadPaths(data.ExitPaths!)", load);
+    }
+
+    [Fact]
+    public void MainWindow_FixedLengthExitBox_ExistsInToolbarAsOptionalInput()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+        Assert.Contains("x:Name=\"FixedExitLengthBox\"", xaml);
+    }
+
+    [Fact]
+    public void MainWindow_FixedExitLength_ParsesOptionalPositiveNumberOnly()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private bool TryGetFixedExitLength");
+        Assert.Contains("string.IsNullOrWhiteSpace(FixedExitLengthBox.Text)", method);
+        Assert.Contains("double.IsFinite(length) && length > 0", method);
+    }
+
+    [Fact]
+    public void MainWindow_SecondClick_TracesFixedLengthWhenLengthBoxHasAValue()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasLeftClick");
+        Assert.Contains("TryGetFixedExitLength(out double fixedLength)", method);
+        Assert.Contains("_wallIndex.TraceFixedLength(pendingStart, worldPoint, fixedLength, SnapToleranceWorld())", method);
+    }
+
+    [Fact]
+    public void MainWindow_MouseMovePreview_TracesFixedLengthRouteWhenLengthBoxHasAValue()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasMouseMove");
+        Assert.Contains("TryGetFixedExitLength(out double fixedLength)", method);
+        Assert.Contains("_wallIndex.TraceFixedLength(pendingStart, worldPoint, fixedLength, SnapToleranceWorld())", method);
+    }
+
+    [Fact]
+    public void MainWindow_MiddleButtonDoubleClick_FitsViewToWallBounds()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+        Assert.Contains("MouseDown=\"OnCanvasMouseDown\"", xaml);
+
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasMouseDown");
+        Assert.Contains("MouseButton.Middle", method);
+        Assert.Contains("e.ClickCount == 2", method);
+        Assert.Contains("FitView();", method);
+        Assert.Contains("Redraw();", method);
+    }
+
+    [Fact]
+    public void MainWindow_MiddleButtonDrag_PansCanvasAndPreservesDoubleClickFit()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        string down = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasMouseDown");
+        string move = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasMouseMove");
+        string up = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasMouseUp");
+        string pan = Slice(source, "public ViewTransform PanBy", "public Point ToScreen");
+
+        Assert.Contains("MouseUp=\"OnCanvasMouseUp\"", xaml);
+        Assert.Contains("DrawingCanvas.CaptureMouse()", down);
+        Assert.Contains("e.ClickCount == 2", down);
+        Assert.Contains("FitView();", down);
+        Assert.Contains("_transform = _transform.PanBy(position - _panStart)", move);
+        Assert.Contains("DrawingCanvas.ReleaseMouseCapture()", up);
+        Assert.Contains("_isFitMode = false", move);
+        Assert.Contains("_translateX + delta.X", pan);
+        Assert.Contains("_translateY + delta.Y", pan);
+        Assert.Contains("private bool _isPanning", source);
+    }
+
+    [Fact]
+    public void MainWindow_ToolbarHint_MentionsCadCanvasControls()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+        Assert.Contains("고정 길이(m)", xaml);
+        Assert.Contains("휠: 포인터 중심 확대/축소", xaml);
+        Assert.Contains("가운데 버튼 드래그: 화면 이동", xaml);
+        Assert.Contains("가운데 버튼 더블클릭", xaml);
+        Assert.Contains("Esc: 모드 종료/그리기 취소", xaml);
+        Assert.Contains("벽 클릭: 기존 길이/방향으로 이동", xaml);
     }
 
     [Fact]
@@ -295,6 +448,34 @@ public class AppSourceTests
             "The mode-off status must be the else-branch fallback that runs when there is no pending point to cancel.");
         Assert.DoesNotContain("_exitEditor.Clear()", method);
         Assert.DoesNotContain("InvalidateAnalysis", method);
+    }
+
+    [Fact]
+    public void MainWindow_Escape_ExitsAddModeAndCancelsPendingDraft()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+        string keyDown = ReadAppMethod("MainWindow.xaml.cs", "private void OnWindowPreviewKeyDown");
+        string modeChanged = ReadAppMethod("MainWindow.xaml.cs", "private void OnAddExitModeChanged");
+
+        Assert.Contains("PreviewKeyDown=\"OnWindowPreviewKeyDown\"", xaml);
+        Assert.Contains("e.Key == Key.Escape && _addExitMode", keyDown);
+        Assert.Contains("AddExitToggle.IsChecked = false", keyDown);
+        Assert.Contains("e.Handled = true", keyDown);
+        Assert.Contains("_exitEditor.HandleRightClick()", modeChanged);
+        Assert.Contains("_previewRoute = null", modeChanged);
+    }
+
+    [Fact]
+    public void MainWindow_NormalModeSelectedExit_ClickingWallRelocatesAndInvalidatesAnalysis()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasLeftClick");
+        int relocate = method.IndexOf("_exitEditor.TryRelocateSelected(_wallIndex, worldPoint, SnapToleranceWorld())", StringComparison.Ordinal);
+        int select = method.IndexOf("_exitEditor.TrySelectNear(worldPoint, selectionToleranceWorld)", StringComparison.Ordinal);
+
+        Assert.True(relocate >= 0 && relocate < select,
+            "A selected exit must get the first chance to relocate to a clicked wall before normal selection runs.");
+        Assert.Contains("InvalidateAnalysis();", method[relocate..select]);
+        Assert.Contains("기존 길이와 방향", method);
     }
 
     [Fact]
@@ -380,27 +561,14 @@ public class AppSourceTests
     }
 
     [Fact]
-    public void MainWindow_CtrlWheelZoomsAroundThePointerAndLeavesFitMode()
+    public void MainWindow_PlainWheelZoomsAroundThePointerAndLeavesFitMode()
     {
         string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasMouseWheel");
-        Assert.Contains("Keyboard.Modifiers", method);
-        Assert.Contains("ModifierKeys.Control", method);
+        Assert.DoesNotContain("Keyboard.Modifiers", method);
         Assert.Contains("e.GetPosition(DrawingCanvas)", method);
         Assert.Contains("ZoomAround", method);
         Assert.Contains("_isFitMode = false", method);
-    }
-
-    [Fact]
-    public void MainWindow_PlainWheelWithoutCtrlIsNotConsumed()
-    {
-        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasMouseWheel");
-        int modifierGuard = method.IndexOf("Keyboard.Modifiers", StringComparison.Ordinal);
-        int firstReturn = method.IndexOf("return;", StringComparison.Ordinal);
-        int firstHandled = method.IndexOf("e.Handled = true", StringComparison.Ordinal);
-        Assert.True(modifierGuard >= 0 && firstReturn > modifierGuard,
-            "Expected an early return guarded by the Control modifier check.");
-        Assert.True(firstHandled > firstReturn,
-            "Expected the plain-wheel path to return before the event is ever marked Handled, so non-Ctrl wheel input is left unconsumed.");
+        Assert.Contains("e.Handled = true", method);
     }
 
     [Fact]

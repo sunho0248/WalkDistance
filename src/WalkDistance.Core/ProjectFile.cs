@@ -8,7 +8,8 @@ public sealed record ProjectData(
     double MetersPerDrawingUnit,
     List<Segment> Walls,
     List<Segment> Exits,
-    string? DxfPath = null);
+    string? DxfPath = null,
+    List<List<WorldPoint>>? ExitPaths = null);
 
 public static class ProjectFile
 {
@@ -20,7 +21,7 @@ public static class ProjectFile
 
     public static void Save(string path, ProjectData data)
     {
-        var current = data with { Version = 3 };
+        var current = NormalizeCurrent(data with { Version = 4 });
         ValidateCurrentVersion(current);
         File.WriteAllText(path, JsonSerializer.Serialize(current, Options));
     }
@@ -31,25 +32,26 @@ public static class ProjectFile
         using var document = JsonDocument.Parse(json);
         int version = ReadVersion(document.RootElement);
 
-        if (version == 3)
+        if (version is 3 or 4)
         {
             var data = JsonSerializer.Deserialize<ProjectData>(json, Options)
                        ?? throw new InvalidDataException($"올바르지 않은 프로젝트 파일입니다: {path}");
-            ValidateCurrentVersion(data);
-            return data;
+            var current = NormalizeCurrent(data with { Version = 4 });
+            ValidateCurrentVersion(current);
+            return current;
         }
 
         if (version == 2)
         {
             var version2 = JsonSerializer.Deserialize<LegacyProjectDataV2>(json, Options)
                            ?? throw new InvalidDataException($"올바르지 않은 프로젝트 파일입니다: {path}");
-            var migrated = new ProjectData(
-                Version: 3,
+            var migrated = NormalizeCurrent(new ProjectData(
+                Version: 4,
                 CellSize: version2.CellSize,
                 MetersPerDrawingUnit: version2.MetersPerDrawingUnit,
                 Walls: version2.Walls ?? [],
                 Exits: MigrateExits(version2.Exits ?? []),
-                DxfPath: version2.DxfPath);
+                DxfPath: version2.DxfPath));
             ValidateCurrentVersion(migrated);
             return migrated;
         }
@@ -84,12 +86,13 @@ public static class ProjectFile
             point.X * dxf.MetersPerDrawingUnit,
             point.Y * dxf.MetersPerDrawingUnit)).ToList();
         return new ProjectData(
-            Version: 3,
+            Version: 4,
             CellSize: legacy.CellSize,
             MetersPerDrawingUnit: dxf.MetersPerDrawingUnit,
             Walls: dxf.Walls.ToList(),
             Exits: MigrateExits(exits),
-            DxfPath: dxfPath);
+            DxfPath: dxfPath,
+            ExitPaths: MigrateExitPaths(exits));
     }
 
     private static int ReadVersion(JsonElement root)
@@ -111,9 +114,9 @@ public static class ProjectFile
 
     private static void ValidateCurrentVersion(ProjectData data)
     {
-        if (data.Version != 3)
+        if (data.Version != 4)
         {
-            throw new InvalidDataException("저장할 프로젝트 버전은 3이어야 합니다.");
+            throw new InvalidDataException("저장할 프로젝트 버전은 4이어야 합니다.");
         }
         if (!double.IsFinite(data.CellSize) || data.CellSize <= 0)
         {
@@ -133,10 +136,37 @@ public static class ProjectFile
         {
             throw new InvalidDataException("프로젝트 출구 좌표가 올바르지 않습니다.");
         }
+        if (data.ExitPaths is null || data.ExitPaths.Any(path =>
+                path is null || path.Count < 2 || path.Any(point => !IsFinite(point))))
+        {
+            throw new InvalidDataException("프로젝트 출구 경로가 올바르지 않습니다.");
+        }
+    }
+
+    private static ProjectData NormalizeCurrent(ProjectData data)
+    {
+        var paths = data.ExitPaths ?? MigrateExitPaths(data.Exits ?? []);
+        if (paths.Any(path => path is null || path.Count < 2))
+        {
+            throw new InvalidDataException("프로젝트 출구 경로는 점이 2개 이상이어야 합니다.");
+        }
+
+        var snapshot = paths.Select(path => path.ToList()).ToList();
+        return data with
+        {
+            ExitPaths = snapshot,
+            Exits = snapshot.Select(path => new Segment(path[0], path[^1])).ToList(),
+        };
     }
 
     private static List<Segment> MigrateExits(IEnumerable<WorldPoint> exits) =>
         exits.Select(point => new Segment(point, point)).ToList();
+
+    private static List<List<WorldPoint>> MigrateExitPaths(IEnumerable<Segment> exits) =>
+        exits.Select(exit => new List<WorldPoint> { exit.Start, exit.End }).ToList();
+
+    private static List<List<WorldPoint>> MigrateExitPaths(IEnumerable<WorldPoint> exits) =>
+        exits.Select(point => new List<WorldPoint> { point, point }).ToList();
 
     private static bool IsFinite(WorldPoint point) =>
         double.IsFinite(point.X) && double.IsFinite(point.Y);

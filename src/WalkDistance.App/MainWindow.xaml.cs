@@ -17,19 +17,28 @@ public partial class MainWindow : Window
     private const double ZoomStepFactor = 1.1;
 
     private List<Segment> _walls = [];
+    private WallIndex _wallIndex = WallIndex.Build([]);
+    private readonly System.Windows.Shapes.Path _wallPath = new()
+    {
+        Stroke = Brushes.Black,
+        StrokeThickness = 1.5,
+    };
+    private WorldPoint _wallGeometryOrigin;
     private readonly ExitLineEditor _exitEditor = new();
     private WalkabilityGrid? _grid;
     private DistanceMapResult? _result;
     private string? _dxfPath;
     private double _metersPerDrawingUnit = 1;
     private bool _addExitMode;
+    private bool _isPanning;
+    private Point _panStart;
     private bool _isFitMode = true;
     private ViewTransform? _transform;
     private WorldPoint? _queryPoint;
     private double? _queryDistance;
     private IReadOnlyList<WorldPoint>? _farthestPathPoints;
     private IReadOnlyList<WorldPoint>? _queryPathPoints;
-    private WorldPoint? _previewEnd;
+    private IReadOnlyList<WorldPoint>? _previewRoute;
     private double? _threshold;
     private IReadOnlyList<DistanceContour> _normalContours = [];
     private IReadOnlyList<IReadOnlyList<DistanceContour>> _normalContourComponents = [];
@@ -58,6 +67,8 @@ public partial class MainWindow : Window
             }
 
             _walls = document.Walls.ToList();
+            _wallIndex = WallIndex.Build(_walls);
+            CacheWallGeometry();
             _metersPerDrawingUnit = document.MetersPerDrawingUnit;
             _dxfPath = dialog.FileName;
             ResetAnalysis(clearExits: true);
@@ -107,12 +118,13 @@ public partial class MainWindow : Window
         try
         {
             ProjectFile.Save(dialog.FileName, new ProjectData(
-                Version: 3,
+                Version: 4,
                 CellSize: cellSize.Value,
                 MetersPerDrawingUnit: _metersPerDrawingUnit,
                 Walls: _walls.ToList(),
-                Exits: _exitEditor.Segments.ToList(),
-                DxfPath: _dxfPath));
+                Exits: [],
+                DxfPath: _dxfPath,
+                ExitPaths: _exitEditor.Paths.Select(path => path.ToList()).ToList()));
             StatusText.Text = $"프로젝트 저장됨: {System.IO.Path.GetFileName(dialog.FileName)} (DXF 없이 다시 열 수 있음)";
         }
         catch (Exception ex)
@@ -138,11 +150,13 @@ public partial class MainWindow : Window
             }
 
             _walls = data.Walls.ToList();
+            _wallIndex = WallIndex.Build(_walls);
+            CacheWallGeometry();
             _dxfPath = data.DxfPath;
             _metersPerDrawingUnit = data.MetersPerDrawingUnit;
             CellSizeBox.Text = data.CellSize.ToString(CultureInfo.InvariantCulture);
             ResetAnalysis(clearExits: true);
-            _exitEditor.LoadSegments(data.Exits);
+            _exitEditor.LoadPaths(data.ExitPaths!);
             StatusText.Text = $"프로젝트 v{data.Version} 불러옴: {System.IO.Path.GetFileName(dialog.FileName)} · 출구 {_exitEditor.Segments.Count}개";
             FitView();
             Redraw();
@@ -175,7 +189,7 @@ public partial class MainWindow : Window
         if (_addExitMode)
         {
             _exitEditor.ClearSelection();
-            StatusText.Text = "도면을 두 번 클릭해 출구 선분을 지정하세요. 우클릭: 그리기 취소";
+            StatusText.Text = "도면을 두 번 클릭해 출구를 지정하세요. Esc: 모드 종료 및 그리기 취소";
             Redraw();
             return;
         }
@@ -183,7 +197,7 @@ public partial class MainWindow : Window
         if (_exitEditor.PendingStart is not null)
         {
             _exitEditor.HandleRightClick();
-            _previewEnd = null;
+            _previewRoute = null;
             StatusText.Text = "출구 선분 그리기가 취소되었습니다.";
         }
         else
@@ -213,16 +227,35 @@ public partial class MainWindow : Window
         {
             var snappedPoint = SnapToNearestWall(worldPoint, out bool snapped);
             string snapNote = snapped ? " (벽/도형에 자동 스냅)" : "";
-            if (_exitEditor.HandleLeftClick(snappedPoint))
+            bool committed = _exitEditor.PendingStart is { } pendingStart && TryGetFixedExitLength(out double fixedLength)
+                ? _exitEditor.HandleLeftClick(_wallIndex.TraceFixedLength(pendingStart, worldPoint, fixedLength, SnapToleranceWorld()))
+                : _exitEditor.HandleLeftClick(snappedPoint);
+            if (committed)
             {
-                _previewEnd = null;
+                _previewRoute = null;
                 InvalidateAnalysis();
                 StatusText.Text = $"출구 {_exitEditor.Segments.Count}개 지정됨{snapNote} · 우클릭: 그리기 취소";
             }
             else
             {
-                _previewEnd = snappedPoint;
-                StatusText.Text = $"출구 시작점 지정됨{snapNote} · 끝점을 클릭하세요. 우클릭: 그리기 취소";
+                _previewRoute = [snappedPoint];
+                StatusText.Text = $"출구 시작점 지정됨{snapNote} · 끝점을 클릭하세요. Esc: 모드 종료 및 그리기 취소";
+            }
+            Redraw();
+            return;
+        }
+
+        if (_exitEditor.SelectedIndex is int selectedIndex &&
+            _wallIndex.TrySnapToNearest(worldPoint, SnapToleranceWorld()) is not null)
+        {
+            if (_exitEditor.TryRelocateSelected(_wallIndex, worldPoint, SnapToleranceWorld()))
+            {
+                InvalidateAnalysis();
+                StatusText.Text = $"출구 {selectedIndex + 1}번을 이동했습니다. 기존 길이와 방향으로 연결된 벽을 다시 추적했습니다.";
+            }
+            else
+            {
+                StatusText.Text = "선택한 위치에서 기존 출구 길이만큼 연결된 벽을 찾을 수 없습니다.";
             }
             Redraw();
             return;
@@ -232,7 +265,7 @@ public partial class MainWindow : Window
         bool hadSelection = _exitEditor.SelectedIndex is not null;
         if (_exitEditor.TrySelectNear(worldPoint, selectionToleranceWorld))
         {
-            StatusText.Text = $"출구 {_exitEditor.SelectedIndex!.Value + 1}번 선택됨 · Delete 키로 삭제 · 다른 곳을 클릭하면 선택 해제";
+            StatusText.Text = $"출구 {_exitEditor.SelectedIndex!.Value + 1}번 선택됨 · 벽 클릭: 기존 길이/방향으로 이동 · Delete: 삭제";
             Redraw();
             return;
         }
@@ -282,7 +315,7 @@ public partial class MainWindow : Window
         DrawingCanvas.Focus();
         e.Handled = true;
         var result = _exitEditor.HandleRightClick();
-        _previewEnd = null;
+        _previewRoute = null;
         StatusText.Text = result switch
         {
             ExitRightClickResult.CancelledPending => "출구 선분 그리기를 취소했습니다.",
@@ -290,6 +323,15 @@ public partial class MainWindow : Window
             _ => "취소할 그리기나 선택이 없습니다.",
         };
         Redraw();
+    }
+
+    private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape && _addExitMode)
+        {
+            AddExitToggle.IsChecked = false;
+            e.Handled = true;
+        }
     }
 
     private void OnCanvasKeyDown(object sender, KeyEventArgs e)
@@ -312,12 +354,25 @@ public partial class MainWindow : Window
 
     private void OnCanvasMouseMove(object sender, MouseEventArgs e)
     {
-        if (!_addExitMode || _exitEditor.PendingStart is null || _transform is null)
+        if (_isPanning && _transform is not null)
+        {
+            var position = e.GetPosition(DrawingCanvas);
+            _transform = _transform.PanBy(position - _panStart);
+            _panStart = position;
+            _isFitMode = false;
+            Redraw();
+            return;
+        }
+
+        if (!_addExitMode || _exitEditor.PendingStart is not { } pendingStart || _transform is null)
         {
             return;
         }
 
-        _previewEnd = SnapToNearestWall(_transform.ToWorld(e.GetPosition(DrawingCanvas)), out _);
+        var worldPoint = _transform.ToWorld(e.GetPosition(DrawingCanvas));
+        _previewRoute = TryGetFixedExitLength(out double fixedLength)
+            ? _wallIndex.TraceFixedLength(pendingStart, worldPoint, fixedLength, SnapToleranceWorld())
+            : [pendingStart, SnapToNearestWall(worldPoint, out _)];
         Redraw();
     }
 
@@ -330,13 +385,44 @@ public partial class MainWindow : Window
         Redraw();
     }
 
-    private void OnCanvasMouseWheel(object sender, MouseWheelEventArgs e)
+    private void OnCanvasMouseDown(object sender, MouseButtonEventArgs e)
     {
-        if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        if (e.ChangedButton != MouseButton.Middle)
         {
             return;
         }
 
+        e.Handled = true;
+        if (e.ClickCount == 2)
+        {
+            _isPanning = false;
+            DrawingCanvas.ReleaseMouseCapture();
+            FitView();
+            Redraw();
+            return;
+        }
+
+        _isPanning = true;
+        _panStart = e.GetPosition(DrawingCanvas);
+        DrawingCanvas.CaptureMouse();
+        DrawingCanvas.Cursor = Cursors.Hand;
+    }
+
+    private void OnCanvasMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Middle)
+        {
+            return;
+        }
+
+        _isPanning = false;
+        DrawingCanvas.ReleaseMouseCapture();
+        DrawingCanvas.Cursor = _addExitMode ? Cursors.Cross : Cursors.Arrow;
+        e.Handled = true;
+    }
+
+    private void OnCanvasMouseWheel(object sender, MouseWheelEventArgs e)
+    {
         e.Handled = true;
         if (_transform is null)
         {
@@ -405,10 +491,34 @@ public partial class MainWindow : Window
             return worldPoint;
         }
 
-        double snapToleranceWorld = ExitSnapToleranceScreenPixels / _transform.Scale;
-        var result = GeometrySnap.TrySnapToNearest(worldPoint, _walls, snapToleranceWorld);
+        var result = _wallIndex.TrySnapToNearest(worldPoint, SnapToleranceWorld());
         snapped = result is not null;
-        return result ?? worldPoint;
+        return result?.Point ?? worldPoint;
+    }
+
+    // Screen-pixel snap/select tolerance converted to world units via the
+    // current view scale. Shared by click-commit, live preview, and fixed-
+    // length tracing so all three agree on the same snap radius.
+    private double SnapToleranceWorld() =>
+        _transform is null ? 0 : ExitSnapToleranceScreenPixels / _transform.Scale;
+
+    private bool TryGetFixedExitLength(out double length)
+    {
+        length = 0;
+        if (string.IsNullOrWhiteSpace(FixedExitLengthBox.Text))
+        {
+            return false;
+        }
+
+        if ((double.TryParse(FixedExitLengthBox.Text, NumberStyles.Float, CultureInfo.CurrentCulture, out length) ||
+             double.TryParse(FixedExitLengthBox.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out length)) &&
+            double.IsFinite(length) && length > 0)
+        {
+            return true;
+        }
+
+        length = 0;
+        return false;
     }
 
     private double? ParseCellSize()
@@ -491,9 +601,11 @@ public partial class MainWindow : Window
                 Redraw();
                 return;
             }
-            var sources = _exitEditor.Segments
-                .SelectMany((exit, exitGroupId) =>
-                    _grid.WalkableSourcesNearSegment(exit, _grid.CellSize, exitGroupId))
+            var sources = _exitEditor.Paths
+                .SelectMany((path, exitGroupId) => path
+                    .Zip(path.Skip(1), (start, end) => new Segment(start, end))
+                    .SelectMany(exit =>
+                        _grid.WalkableSourcesNearSegment(exit, _grid.CellSize, exitGroupId)))
                 .ToList();
             if (sources.Count == 0)
             {
@@ -555,7 +667,7 @@ public partial class MainWindow : Window
         if (clearExits)
         {
             _exitEditor.Clear();
-            _previewEnd = null;
+            _previewRoute = null;
             AddExitToggle.IsChecked = false;
         }
         InvalidateAnalysis();
@@ -690,48 +802,30 @@ public partial class MainWindow : Window
             DrawContours(_normalContours, _thresholdContours, _normalContourComponents);
         }
 
-        foreach (var wall in _walls)
-        {
-            var start = _transform.ToScreen(wall.Start);
-            var end = _transform.ToScreen(wall.End);
-            DrawingCanvas.Children.Add(new Line
-            {
-                X1 = start.X,
-                Y1 = start.Y,
-                X2 = end.X,
-                Y2 = end.Y,
-                Stroke = Brushes.Black,
-                StrokeThickness = 1.5,
-            });
-        }
+        DrawWalls();
 
-        for (int i = 0; i < _exitEditor.Segments.Count; i++)
+        for (int i = 0; i < _exitEditor.Paths.Count; i++)
         {
-            var exit = _exitEditor.Segments[i];
+            var path = _exitEditor.Paths[i];
             bool isSelected = _exitEditor.SelectedIndex == i;
-            var start = _transform.ToScreen(exit.Start);
-            var end = _transform.ToScreen(exit.End);
             var brush = isSelected ? Brushes.DodgerBlue : Brushes.LimeGreen;
-            DrawingCanvas.Children.Add(new Line
+            DrawingCanvas.Children.Add(new Polyline
             {
-                X1 = start.X,
-                Y1 = start.Y,
-                X2 = end.X,
-                Y2 = end.Y,
+                Points = new PointCollection(path.Select(_transform.ToScreen)),
                 Stroke = brush,
                 StrokeThickness = isSelected ? 5 : 3,
                 ToolTip = isSelected ? $"출구 {i + 1}번 (선택됨)" : $"출구 {i + 1}번",
             });
-            AddMarker(start, isSelected ? 5 : 4, brush, "출구 시작점");
-            AddMarker(end, isSelected ? 5 : 4, brush, "출구 끝점");
+            AddMarker(_transform.ToScreen(path[0]), isSelected ? 5 : 4, brush, "출구 시작점");
+            AddMarker(_transform.ToScreen(path[^1]), isSelected ? 5 : 4, brush, "출구 끝점");
         }
 
         if (_exitEditor.PendingStart is { } pendingStart)
         {
             AddMarker(_transform.ToScreen(pendingStart), 4, Brushes.LightGreen, "출구 시작점 (지정 중)");
-            if (_previewEnd is { } previewEnd)
+            if (_previewRoute is { Count: > 1 } previewRoute)
             {
-                AddPath([pendingStart, previewEnd], Brushes.LightGreen, 2);
+                AddPath(previewRoute, Brushes.LightGreen, 2);
             }
         }
 
@@ -778,6 +872,41 @@ public partial class MainWindow : Window
         Canvas.SetLeft(image, topLeft.X);
         Canvas.SetTop(image, topLeft.Y);
         DrawingCanvas.Children.Add(image);
+    }
+
+    private void CacheWallGeometry()
+    {
+        var bounds = Bounds.FromSegments(_walls);
+        _wallGeometryOrigin = new WorldPoint(bounds.MinX, bounds.MinY);
+        var geometry = new StreamGeometry();
+        using (var context = geometry.Open())
+        {
+            foreach (var wall in _walls)
+            {
+                context.BeginFigure(new Point(
+                    wall.Start.X - _wallGeometryOrigin.X,
+                    wall.Start.Y - _wallGeometryOrigin.Y), false, false);
+                context.LineTo(new Point(
+                    wall.End.X - _wallGeometryOrigin.X,
+                    wall.End.Y - _wallGeometryOrigin.Y), true, false);
+            }
+        }
+        geometry.Freeze();
+        _wallPath.Data = geometry;
+    }
+
+    private void DrawWalls()
+    {
+        if (_transform is null || _wallPath.Data is not StreamGeometry geometry || geometry.IsEmpty())
+        {
+            return;
+        }
+
+        var origin = _transform.ToScreen(_wallGeometryOrigin);
+        _wallPath.RenderTransform = new MatrixTransform(
+            _transform.Scale, 0, 0, -_transform.Scale, origin.X, origin.Y);
+        _wallPath.StrokeThickness = 1.5 / _transform.Scale;
+        DrawingCanvas.Children.Add(_wallPath);
     }
 
     private void DrawContours(
@@ -998,6 +1127,10 @@ public sealed class ViewTransform
         double newTranslateY = screenPoint.Y - appliedFactor * (screenPoint.Y - _translateY);
         return new ViewTransform(newScale, newTranslateX, newTranslateY, _originX, _originY, _minScale, _maxScale);
     }
+
+    public ViewTransform PanBy(Vector delta) => new(
+        Scale, _translateX + delta.X, _translateY + delta.Y,
+        _originX, _originY, _minScale, _maxScale);
 
     public Point ToScreen(WorldPoint point) => new(
         _translateX + (point.X - _originX) * Scale,

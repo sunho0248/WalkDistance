@@ -10,7 +10,7 @@ public sealed class ProjectFileTests : IDisposable
     public ProjectFileTests() => Directory.CreateDirectory(_directory);
 
     [Fact]
-    public void Version3_RoundTripsSegmentsWithoutSourceDxf()
+    public void Version4_RoundTripsMultiPointExitPathsWithoutSourceDxf()
     {
         var dxfPath = Path.Combine(_directory, "room.dxf");
         File.WriteAllText(dxfPath, DxfLoaderTests.DxfWithEntities("""
@@ -27,23 +27,54 @@ public sealed class ProjectFileTests : IDisposable
             """, insUnits: 4));
         var document = DxfLoader.Load(dxfPath);
         var projectPath = Path.Combine(_directory, "room.json");
+        var exitPath = new List<WorldPoint>
+        {
+            new(0.5, 0.5),
+            new(1, 0.5),
+            new(1, 0.75),
+        };
         var expected = new ProjectData(
-            Version: 3,
+            Version: 4,
             CellSize: 0.25,
             MetersPerDrawingUnit: document.MetersPerDrawingUnit,
             Walls: document.Walls.ToList(),
-            Exits: [new Segment(new WorldPoint(0.5, 0.5), new WorldPoint(1, 0.5))],
-            DxfPath: dxfPath);
+            Exits: [new Segment(exitPath[0], exitPath[^1])],
+            DxfPath: dxfPath,
+            ExitPaths: [exitPath]);
 
         ProjectFile.Save(projectPath, expected);
         File.Delete(dxfPath);
         var actual = ProjectFile.Load(projectPath);
 
-        Assert.Equal(3, actual.Version);
+        Assert.Equal(4, actual.Version);
         Assert.Equal(expected.Walls, actual.Walls);
         Assert.Equal(expected.Exits, actual.Exits);
+        Assert.Equal(exitPath, Assert.Single(actual.ExitPaths!));
         Assert.Equal(expected.CellSize, actual.CellSize);
         Assert.Equal(expected.MetersPerDrawingUnit, actual.MetersPerDrawingUnit);
+    }
+
+    [Fact]
+    public void Version3_MigratesSegmentsToTwoPointExitPaths()
+    {
+        var walls = Rectangle(0, 0, 10, 10);
+        var exit = new Segment(new WorldPoint(2, 0), new WorldPoint(4, 0));
+        var projectPath = Path.Combine(_directory, "version3.json");
+        File.WriteAllText(projectPath, JsonSerializer.Serialize(new
+        {
+            Version = 3,
+            CellSize = 1.0,
+            MetersPerDrawingUnit = 1.0,
+            Walls = walls,
+            Exits = new[] { exit },
+            DxfPath = (string?)null,
+        }));
+
+        var project = ProjectFile.Load(projectPath);
+
+        Assert.Equal(4, project.Version);
+        Assert.Equal(exit, Assert.Single(project.Exits));
+        Assert.Equal(new[] { exit.Start, exit.End }, Assert.Single(project.ExitPaths!));
     }
 
     [Fact]
@@ -73,8 +104,9 @@ public sealed class ProjectFileTests : IDisposable
         var legacyResult = DistanceMapCalculator.Compute(grid, new[] { legacySource });
         var migratedResult = DistanceMapCalculator.Compute(grid, migratedSources);
 
-        Assert.Equal(3, project.Version);
+        Assert.Equal(4, project.Version);
         Assert.Equal(new Segment(pointExit, pointExit), migratedExit);
+        Assert.Equal(new[] { pointExit, pointExit }, Assert.Single(project.ExitPaths!));
         Assert.Equal(legacySource, Assert.Single(migratedSources));
         Assert.Equal(legacyResult.FarthestCell, migratedResult.FarthestCell);
         Assert.Equal(legacyResult.MaxDistance, migratedResult.MaxDistance);
@@ -106,7 +138,7 @@ public sealed class ProjectFileTests : IDisposable
 
         var project = ProjectFile.Load(projectPath);
 
-        Assert.Equal(3, project.Version);
+        Assert.Equal(4, project.Version);
         Assert.Single(project.Walls);
         Assert.Equal(new WorldPoint(4, 0), project.Walls[0].End);
         Assert.Equal(new Segment(new WorldPoint(1, 1), new WorldPoint(1, 1)), project.Exits.Single());
@@ -130,7 +162,7 @@ public sealed class ProjectFileTests : IDisposable
     public void UnsupportedVersion_IsRejected()
     {
         var projectPath = Path.Combine(_directory, "future.json");
-        File.WriteAllText(projectPath, "{\"Version\":4}");
+        File.WriteAllText(projectPath, "{\"Version\":5}");
 
         Assert.Throws<InvalidDataException>(() => ProjectFile.Load(projectPath));
     }
