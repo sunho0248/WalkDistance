@@ -3,6 +3,14 @@ namespace WalkDistance.Core.Tests;
 public class AppSourceTests
 {
     [Fact]
+    public void AppProject_EmbedsTheWalkDistanceIcon()
+    {
+        string project = ReadAppFile("WalkDistance.App.csproj");
+
+        Assert.Contains("<ApplicationIcon>Assets\\WalkDistance.ico</ApplicationIcon>", project);
+    }
+
+    [Fact]
     public void MainWindow_TitleShowsProjectNameAndDirtyMarker()
     {
         string source = ReadAppFile("MainWindow.xaml.cs");

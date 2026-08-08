@@ -10,6 +10,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <AssemblyName>WalkDistance</AssemblyName>
+    <ApplicationIcon>Assets\WalkDistance.ico</ApplicationIcon>
   </PropertyGroup>
 
 </Project>
