@@ -35,6 +35,9 @@ public partial class MainWindow : Window
     private bool _addExitMode;
     private bool _isPanning;
     private Point _panStart;
+    private bool _isZoomWindowDragging;
+    private Point _zoomWindowStart;
+    private Point _zoomWindowEnd;
     private bool _isFitMode = true;
     private ViewTransform? _transform;
     private WorldPoint? _queryPoint;
@@ -258,7 +261,7 @@ public partial class MainWindow : Window
     private void OnAddExitModeChanged(object sender, RoutedEventArgs e)
     {
         _addExitMode = AddExitToggle.IsChecked == true;
-        DrawingCanvas.Cursor = _addExitMode ? Cursors.Cross : Cursors.Arrow;
+        DrawingCanvas.Cursor = ZoomWindowToggle.IsChecked == true || _addExitMode ? Cursors.Cross : Cursors.Arrow;
         if (_addExitMode)
         {
             _exitEditor.ClearSelection();
@@ -291,6 +294,14 @@ public partial class MainWindow : Window
         Redraw();
     }
 
+    private void OnZoomWindowModeChanged(object sender, RoutedEventArgs e)
+    {
+        _isZoomWindowDragging = false;
+        DrawingCanvas.ReleaseMouseCapture();
+        DrawingCanvas.Cursor = ZoomWindowToggle.IsChecked == true || _addExitMode ? Cursors.Cross : Cursors.Arrow;
+        Redraw();
+    }
+
     private void OnCanvasLeftClick(object sender, MouseButtonEventArgs e)
     {
         DrawingCanvas.Focus();
@@ -304,12 +315,9 @@ public partial class MainWindow : Window
         {
             if (TryGetFixedExitLength(out double fixedLength))
             {
-                bool fixedCommitted = _previewRoute is { Count: > 1 } previewRoute &&
-                                      _exitEditor.CommitPath(previewRoute);
+                bool fixedCommitted = CommitExitPreview();
                 if (fixedCommitted)
                 {
-                    _previewRoute = null;
-                    InvalidateAnalysis();
                     StatusText.Text = $"고정 길이 {fixedLength:G} m 출구 {_exitEditor.Segments.Count}개 지정됨 · 마우스를 움직여 다음 출구 미리보기";
                 }
                 else
@@ -322,6 +330,16 @@ public partial class MainWindow : Window
 
             var snappedPoint = SnapToNearestWall(worldPoint, out bool snapped);
             string snapNote = snapped ? " (벽/도형에 자동 스냅)" : "";
+            if (_exitEditor.PendingStart is { } pendingStart)
+            {
+                _previewRoute = [pendingStart, snappedPoint];
+                if (CommitExitPreview())
+                {
+                    StatusText.Text = $"출구 {_exitEditor.Segments.Count}개 지정됨{snapNote} · 우클릭: 그리기 취소";
+                }
+                Redraw();
+                return;
+            }
             bool committed = _exitEditor.HandleLeftClick(snappedPoint);
             if (committed)
             {
@@ -403,6 +421,18 @@ public partial class MainWindow : Window
         Redraw();
     }
 
+    private bool CommitExitPreview()
+    {
+        if (!_addExitMode || _previewRoute is not { Count: > 1 } previewRoute || !_exitEditor.CommitPath(previewRoute))
+        {
+            return false;
+        }
+
+        _previewRoute = null;
+        InvalidateAnalysis();
+        return true;
+    }
+
     private void OnCanvasRightClick(object sender, MouseButtonEventArgs e)
     {
         DrawingCanvas.Focus();
@@ -420,8 +450,28 @@ public partial class MainWindow : Window
 
     private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key == Key.Space && _addExitMode && ZoomWindowToggle.IsChecked != true)
+        {
+            if (CommitExitPreview())
+            {
+                StatusText.Text = $"출구 {_exitEditor.Segments.Count}개 지정됨 · Space로 미리보기 그대로 확정";
+                e.Handled = true;
+                Redraw();
+            }
+            return;
+        }
+
         if (e.Key != Key.Escape)
         {
+            return;
+        }
+
+        if (ZoomWindowToggle.IsChecked == true)
+        {
+            ZoomWindowToggle.IsChecked = false;
+            StatusText.Text = "Zoom Window를 취소했습니다.";
+            e.Handled = true;
+            Redraw();
             return;
         }
 
@@ -465,6 +515,13 @@ public partial class MainWindow : Window
 
     private void OnCanvasMouseMove(object sender, MouseEventArgs e)
     {
+        if (_isZoomWindowDragging)
+        {
+            _zoomWindowEnd = e.GetPosition(DrawingCanvas);
+            Redraw();
+            return;
+        }
+
         if (_isPanning && _transform is not null)
         {
             var position = e.GetPosition(DrawingCanvas);
@@ -512,6 +569,16 @@ public partial class MainWindow : Window
 
     private void OnCanvasMouseDown(object sender, MouseButtonEventArgs e)
     {
+        if (ZoomWindowToggle.IsChecked == true && e.ChangedButton == MouseButton.Left && _transform is not null)
+        {
+            e.Handled = true;
+            _isZoomWindowDragging = true;
+            _zoomWindowStart = _zoomWindowEnd = e.GetPosition(DrawingCanvas);
+            DrawingCanvas.CaptureMouse();
+            Redraw();
+            return;
+        }
+
         if (e.ChangedButton != MouseButton.Middle)
         {
             return;
@@ -535,6 +602,21 @@ public partial class MainWindow : Window
 
     private void OnCanvasMouseUp(object sender, MouseButtonEventArgs e)
     {
+        if (_isZoomWindowDragging && e.ChangedButton == MouseButton.Left)
+        {
+            e.Handled = true;
+            _isZoomWindowDragging = false;
+            DrawingCanvas.ReleaseMouseCapture();
+            var selection = new Rect(_zoomWindowStart, _zoomWindowEnd);
+            if (_transform is not null && selection.Width >= 4 && selection.Height >= 4)
+            {
+                _transform = _transform.ZoomToRectangle(selection, DrawingCanvas.ActualWidth, DrawingCanvas.ActualHeight);
+                _isFitMode = false;
+            }
+            Redraw();
+            return;
+        }
+
         if (e.ChangedButton != MouseButton.Middle)
         {
             return;
@@ -1034,6 +1116,11 @@ public partial class MainWindow : Window
             AddMarker(_transform.ToScreen(previewRoute[^1]), 4, Brushes.Red, "출구 미리보기 끝점");
         }
 
+        if (_isZoomWindowDragging)
+        {
+            DrawZoomWindow();
+        }
+
         if (_exitEditor.PendingStart is { } pendingStart)
         {
             AddMarker(_transform.ToScreen(pendingStart), 4, Brushes.LightGreen, "출구 시작점 (지정 중)");
@@ -1204,6 +1291,23 @@ public partial class MainWindow : Window
         DrawingCanvas.Children.Add(ellipse);
     }
 
+    private void DrawZoomWindow()
+    {
+        var selection = new Rect(_zoomWindowStart, _zoomWindowEnd);
+        var rectangle = new Rectangle
+        {
+            Width = selection.Width,
+            Height = selection.Height,
+            Stroke = Brushes.DodgerBlue,
+            StrokeThickness = 1,
+            StrokeDashArray = [4, 2],
+            Fill = new SolidColorBrush(Color.FromArgb(32, 30, 144, 255)),
+        };
+        Canvas.SetLeft(rectangle, selection.Left);
+        Canvas.SetTop(rectangle, selection.Top);
+        DrawingCanvas.Children.Add(rectangle);
+    }
+
     private void AddPath(IReadOnlyList<WorldPoint>? points, Brush brush, double thickness)
     {
         if (_transform is null || points is null || points.Count < 2)
@@ -1336,6 +1440,13 @@ public sealed class ViewTransform
         double newTranslateX = screenPoint.X - appliedFactor * (screenPoint.X - _translateX);
         double newTranslateY = screenPoint.Y - appliedFactor * (screenPoint.Y - _translateY);
         return new ViewTransform(newScale, newTranslateX, newTranslateY, _originX, _originY, _minScale, _maxScale);
+    }
+
+    public ViewTransform ZoomToRectangle(Rect selection, double canvasWidth, double canvasHeight)
+    {
+        double factor = Math.Min(canvasWidth / selection.Width, canvasHeight / selection.Height);
+        var center = new Point(selection.Left + selection.Width / 2, selection.Top + selection.Height / 2);
+        return ZoomAround(center, factor).PanBy(new Vector(canvasWidth / 2 - center.X, canvasHeight / 2 - center.Y));
     }
 
     public ViewTransform PanBy(Vector delta) => new(

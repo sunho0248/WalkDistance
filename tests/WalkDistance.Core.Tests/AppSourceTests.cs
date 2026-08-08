@@ -3,6 +3,43 @@ namespace WalkDistance.Core.Tests;
 public class AppSourceTests
 {
     [Fact]
+    public void MainWindow_SpaceCommitsOnlyTheExactValidExitPreview()
+    {
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        string keyDown = ReadAppMethod("MainWindow.xaml.cs", "private void OnWindowPreviewKeyDown");
+        string commit = ReadAppMethod("MainWindow.xaml.cs", "private bool CommitExitPreview");
+
+        Assert.Contains("e.Key == Key.Space", keyDown);
+        Assert.Contains("_addExitMode", keyDown);
+        Assert.Contains("CommitExitPreview()", keyDown);
+        Assert.Contains("_previewRoute is not { Count: > 1 }", commit);
+        Assert.Contains("_exitEditor.CommitPath(previewRoute)", commit);
+        Assert.Contains("InvalidateAnalysis()", commit);
+        Assert.Contains("CommitExitPreview()", ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasLeftClick"));
+    }
+
+    [Fact]
+    public void MainWindow_ZoomWindowToggleDragsAndFitsBeforeExitWriting()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        string down = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasMouseDown");
+        string move = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasMouseMove");
+        string up = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasMouseUp");
+        string keyDown = ReadAppMethod("MainWindow.xaml.cs", "private void OnWindowPreviewKeyDown");
+
+        Assert.Contains("x:Name=\"ZoomWindowToggle\" Content=\"Zoom Window\"", xaml);
+        Assert.Contains("_isZoomWindowDragging", source);
+        Assert.Contains("ZoomWindowToggle.IsChecked == true", down);
+        Assert.Contains("e.ChangedButton == MouseButton.Left", down);
+        Assert.Contains("_zoomWindowEnd = e.GetPosition(DrawingCanvas)", move);
+        Assert.Contains("ZoomToRectangle", up);
+        Assert.Contains("_isFitMode = false", up);
+        Assert.Contains("ZoomWindowToggle.IsChecked = false", keyDown);
+        Assert.Contains("DrawZoomWindow", ReadAppMethod("MainWindow.xaml.cs", "private void Redraw"));
+    }
+
+    [Fact]
     public void AppProject_EmbedsTheWalkDistanceIcon()
     {
         string project = ReadAppFile("WalkDistance.App.csproj");
@@ -465,9 +502,11 @@ public class AppSourceTests
     public void MainWindow_FixedLengthClick_CommitsTheCurrentPreviewWithoutRetracing()
     {
         string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasLeftClick");
+        string commit = ReadAppMethod("MainWindow.xaml.cs", "private bool CommitExitPreview");
 
         Assert.Contains("TryGetFixedExitLength(out double fixedLength)", method);
-        Assert.Contains("_exitEditor.CommitPath(previewRoute)", method);
+        Assert.Contains("CommitExitPreview()", method);
+        Assert.Contains("_exitEditor.CommitPath(previewRoute)", commit);
         Assert.DoesNotContain("TraceFixedLengthFromMidpoint", method);
     }
 

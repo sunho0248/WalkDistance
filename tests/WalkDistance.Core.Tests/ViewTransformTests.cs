@@ -62,4 +62,18 @@ public class ViewTransformTests
         Assert.Equal(pointer.X, reprojected.X, precision: 6);
         Assert.Equal(pointer.Y, reprojected.Y, precision: 6);
     }
+
+    [Fact]
+    public void ZoomToRectangle_FitsSelectionAndPreservesAspectRatio()
+    {
+        var transform = ViewTransform.Build(new Bounds(0, 0, 100, 100), 1000, 800);
+        var selection = new Rect(100, 200, 400, 200);
+
+        ViewTransform zoomed = transform.ZoomToRectangle(selection, 1000, 800);
+
+        Assert.Equal(transform.Scale * 2.5, zoomed.Scale, precision: 6);
+        Point center = zoomed.ToScreen(transform.ToWorld(new Point(300, 300)));
+        Assert.Equal(500, center.X, precision: 6);
+        Assert.Equal(400, center.Y, precision: 6);
+    }
 }

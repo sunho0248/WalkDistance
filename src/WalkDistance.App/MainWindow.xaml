@@ -44,6 +44,10 @@
                               Checked="OnAddExitModeChanged" Unchecked="OnAddExitModeChanged"/>
                 <Button Content="출구 전체 초기화" Click="OnClearExits"/>
                 <Separator/>
+                <ToggleButton x:Name="ZoomWindowToggle" Content="Zoom Window" Width="95"
+                              Checked="OnZoomWindowModeChanged" Unchecked="OnZoomWindowModeChanged"
+                              ToolTip="화면에서 확대할 영역을 드래그하세요. Esc: 취소"/>
+                <Separator/>
                 <TextBlock Text="고정 길이(m):" VerticalAlignment="Center" Margin="4,0"/>
                 <TextBox x:Name="FixedExitLengthBox" Width="50" VerticalAlignment="Center"
                          ToolTip="비우면 두 번 클릭하는 직선 출구 · 값을 입력하면 마우스 위치가 중심인 전체 길이를 벽 따라 실시간 미리보기 · 클릭하면 미리보기 그대로 확정"/>
