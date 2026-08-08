@@ -33,7 +33,7 @@
                 <Separator/>
                 <TextBlock Text="고정 길이(m):" VerticalAlignment="Center" Margin="4,0"/>
                 <TextBox x:Name="FixedExitLengthBox" Width="50" VerticalAlignment="Center"
-                         ToolTip="비우면 두 번째 클릭 지점까지 직선 출구 · 값을 입력하면 시작점에서 벽을 따라 그 길이만큼 자동 추적(방향은 두 번째 클릭 위치)"/>
+                         ToolTip="비우면 두 번 클릭하는 직선 출구 · 값을 입력하면 마우스 위치가 중심인 전체 길이를 벽 따라 실시간 미리보기 · 클릭하면 미리보기 그대로 확정"/>
                 <Separator/>
                 <TextBlock Text="셀 크기(m):" VerticalAlignment="Center" Margin="4,0"/>
                 <TextBox x:Name="CellSizeBox" Width="50" Text="0.05" VerticalAlignment="Center"/>
@@ -50,7 +50,7 @@
                 <CheckBox x:Name="PathOverlayToggle" Content="보행경로" IsChecked="True"
                           Checked="OnOverlayToggleChanged" Unchecked="OnOverlayToggleChanged" Margin="4,0"/>
                 <Separator/>
-                <TextBlock Text="출구 모드 켬: 두 번 클릭해 지정(가까운 벽/도형에 자동 스냅) · Esc: 모드 종료/그리기 취소 · 출구 모드 끔: 완료된 출구 클릭해 선택 후 Delete로 삭제 · 벽 클릭: 기존 길이/방향으로 이동 · 고정 길이(m): 벽 따라 자동 추적 · 휠: 포인터 중심 확대/축소 · 가운데 버튼 드래그: 화면 이동 · 가운데 버튼 더블클릭: 전체 보기"
+                <TextBlock Text="출구 모드 켬: 일반 출구는 두 번 클릭(자동 스냅) · 고정 길이는 마우스 위치가 중심인 전체 벽 경로를 미리보기 그대로 클릭해 확정 · Esc: 모드 종료/그리기 취소/조회 지우기 · 출구 모드 끔: 완료된 출구 클릭해 선택 후 Delete로 삭제 · 벽 클릭 위치가 중심이 되도록 기존 길이/방향으로 이동 · 휠: 포인터 중심 확대/축소 · 가운데 버튼 드래그: 화면 이동 · 가운데 버튼 더블클릭: 전체 보기"
                            Foreground="DimGray" VerticalAlignment="Center" Margin="4,0"/>
             </ToolBar>
         </ToolBarTray>

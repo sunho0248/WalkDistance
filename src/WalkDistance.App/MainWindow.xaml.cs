@@ -189,15 +189,18 @@ public partial class MainWindow : Window
         if (_addExitMode)
         {
             _exitEditor.ClearSelection();
-            StatusText.Text = "도면을 두 번 클릭해 출구를 지정하세요. Esc: 모드 종료 및 그리기 취소";
+            _previewRoute = null;
+            StatusText.Text = TryGetFixedExitLength(out _)
+                ? "마우스 위치를 중심으로 고정 길이 출구를 미리 봅니다. 클릭: 그대로 확정 · Esc: 모드 종료/조회 지우기"
+                : "도면을 두 번 클릭해 출구를 지정하세요. Esc: 모드 종료/그리기 취소/조회 지우기";
             Redraw();
             return;
         }
 
+        _previewRoute = null;
         if (_exitEditor.PendingStart is not null)
         {
             _exitEditor.HandleRightClick();
-            _previewRoute = null;
             StatusText.Text = "출구 선분 그리기가 취소되었습니다.";
         }
         else
@@ -225,11 +228,27 @@ public partial class MainWindow : Window
         var worldPoint = _transform.ToWorld(e.GetPosition(DrawingCanvas));
         if (_addExitMode)
         {
+            if (TryGetFixedExitLength(out double fixedLength))
+            {
+                bool fixedCommitted = _previewRoute is { Count: > 1 } previewRoute &&
+                                      _exitEditor.CommitPath(previewRoute);
+                if (fixedCommitted)
+                {
+                    _previewRoute = null;
+                    InvalidateAnalysis();
+                    StatusText.Text = $"고정 길이 {fixedLength:G} m 출구 {_exitEditor.Segments.Count}개 지정됨 · 마우스를 움직여 다음 출구 미리보기";
+                }
+                else
+                {
+                    StatusText.Text = "이 위치에서는 입력한 고정 길이 전체를 연결된 벽에서 미리 볼 수 없습니다.";
+                }
+                Redraw();
+                return;
+            }
+
             var snappedPoint = SnapToNearestWall(worldPoint, out bool snapped);
             string snapNote = snapped ? " (벽/도형에 자동 스냅)" : "";
-            bool committed = _exitEditor.PendingStart is { } pendingStart && TryGetFixedExitLength(out double fixedLength)
-                ? _exitEditor.HandleLeftClick(_wallIndex.TraceFixedLength(pendingStart, worldPoint, fixedLength, SnapToleranceWorld()))
-                : _exitEditor.HandleLeftClick(snappedPoint);
+            bool committed = _exitEditor.HandleLeftClick(snappedPoint);
             if (committed)
             {
                 _previewRoute = null;
@@ -251,7 +270,7 @@ public partial class MainWindow : Window
             if (_exitEditor.TryRelocateSelected(_wallIndex, worldPoint, SnapToleranceWorld()))
             {
                 InvalidateAnalysis();
-                StatusText.Text = $"출구 {selectedIndex + 1}번을 이동했습니다. 기존 길이와 방향으로 연결된 벽을 다시 추적했습니다.";
+                StatusText.Text = $"출구 {selectedIndex + 1}번을 클릭 위치 중심으로 이동했습니다. 기존 길이와 방향 및 전체 경로 길이를 유지했습니다.";
             }
             else
             {
@@ -265,7 +284,7 @@ public partial class MainWindow : Window
         bool hadSelection = _exitEditor.SelectedIndex is not null;
         if (_exitEditor.TrySelectNear(worldPoint, selectionToleranceWorld))
         {
-            StatusText.Text = $"출구 {_exitEditor.SelectedIndex!.Value + 1}번 선택됨 · 벽 클릭: 기존 길이/방향으로 이동 · Delete: 삭제";
+            StatusText.Text = $"출구 {_exitEditor.SelectedIndex!.Value + 1}번 선택됨 · 벽 클릭 위치가 중심이 되도록 기존 길이/방향으로 이동 · Delete: 삭제";
             Redraw();
             return;
         }
@@ -327,11 +346,28 @@ public partial class MainWindow : Window
 
     private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Escape && _addExitMode)
+        if (e.Key != Key.Escape)
+        {
+            return;
+        }
+
+        bool exitedAddMode = _addExitMode;
+        bool clearedQuery = _queryPoint is not null || _queryDistance is not null || _queryPathPoints is not null;
+        if (exitedAddMode)
         {
             AddExitToggle.IsChecked = false;
-            e.Handled = true;
         }
+        _queryPoint = null;
+        _queryDistance = null;
+        _queryPathPoints = null;
+        if (clearedQuery)
+        {
+            StatusText.Text = exitedAddMode
+                ? "출구 지정 모드를 종료하고 조회 지점과 경로를 지웠습니다."
+                : "조회 지점과 경로를 지웠습니다.";
+        }
+        e.Handled = true;
+        Redraw();
     }
 
     private void OnCanvasKeyDown(object sender, KeyEventArgs e)
@@ -364,15 +400,29 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!_addExitMode || _exitEditor.PendingStart is not { } pendingStart || _transform is null)
+        if (!_addExitMode || _transform is null)
         {
             return;
         }
 
         var worldPoint = _transform.ToWorld(e.GetPosition(DrawingCanvas));
-        _previewRoute = TryGetFixedExitLength(out double fixedLength)
-            ? _wallIndex.TraceFixedLength(pendingStart, worldPoint, fixedLength, SnapToleranceWorld())
-            : [pendingStart, SnapToNearestWall(worldPoint, out _)];
+        if (TryGetFixedExitLength(out double fixedLength))
+        {
+            _previewRoute = _wallIndex.TraceFixedLengthFromMidpoint(worldPoint, fixedLength, SnapToleranceWorld());
+            StatusText.Text = _previewRoute.Count > 1
+                ? $"고정 길이 {fixedLength:G} m 전체 미리보기 · 마우스 위치가 중심 · 클릭하면 그대로 확정"
+                : "이 위치에서는 입력한 고정 길이 전체를 연결된 벽에서 추적할 수 없습니다.";
+            Redraw();
+            return;
+        }
+
+        if (_exitEditor.PendingStart is not { } pendingStart)
+        {
+            _previewRoute = null;
+            return;
+        }
+
+        _previewRoute = [pendingStart, SnapToNearestWall(worldPoint, out _)];
         Redraw();
     }
 
@@ -820,13 +870,14 @@ public partial class MainWindow : Window
             AddMarker(_transform.ToScreen(path[^1]), isSelected ? 5 : 4, brush, "출구 끝점");
         }
 
+        if (_previewRoute is { Count: > 1 } previewRoute)
+        {
+            AddPath(previewRoute, Brushes.LightGreen, 2);
+        }
+
         if (_exitEditor.PendingStart is { } pendingStart)
         {
             AddMarker(_transform.ToScreen(pendingStart), 4, Brushes.LightGreen, "출구 시작점 (지정 중)");
-            if (_previewRoute is { Count: > 1 } previewRoute)
-            {
-                AddPath(previewRoute, Brushes.LightGreen, 2);
-            }
         }
 
         if (showPaths)

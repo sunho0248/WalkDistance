@@ -60,9 +60,19 @@ public sealed class ExitLineEditor
             return false;
         }
 
+        return CommitPath(tracedRoute);
+    }
+
+    public bool CommitPath(IReadOnlyList<WorldPoint> path)
+    {
+        if (path.Count < 2)
+        {
+            return false;
+        }
+
         SelectedIndex = null;
-        _paths.Add(tracedRoute.ToArray());
         _pendingStart = null;
+        _paths.Add(path.ToArray());
         return true;
     }
 
@@ -124,10 +134,11 @@ public sealed class ExitLineEditor
 
         var path = _paths[index];
         double length = PathLength(path);
-        var direction = new WorldPoint(
+        var towardPoint = new WorldPoint(
             snap.Point.X + path[1].X - path[0].X,
             snap.Point.Y + path[1].Y - path[0].Y);
-        var relocated = walls.TraceFixedLength(snap.Point, direction, length, tolerance);
+        var relocated = walls.TraceFixedLengthFromMidpoint(
+            snap.Point, length, tolerance, towardPoint);
         if (relocated.Count < 2 || Math.Abs(PathLength(relocated) - length) > Math.Max(1e-9, length * 1e-9))
         {
             return false;

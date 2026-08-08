@@ -385,6 +385,41 @@ public class DistanceMapCalculatorTests
     }
 
     [Fact]
+    public void CircularWallFixedExit_UsesBothSidesOfTheDisplayedExitAsDistanceSources()
+    {
+        const int sideCount = 64;
+        var walls = Enumerable.Range(0, sideCount)
+            .Select(i => new Segment(
+                CirclePoint(i),
+                CirclePoint((i + 1) % sideCount)))
+            .ToArray();
+        var wallIndex = WallIndex.Build(walls);
+        var exitPath = wallIndex.TraceFixedLengthFromMidpoint(
+            new WorldPoint(10, 0), length: 8, tolerance: 0.1);
+        var grid = WalkabilityGrid.Build(walls, cellSize: 0.25, marginCells: 1);
+        var sources = exitPath.Zip(exitPath.Skip(1), (start, end) => new Segment(start, end))
+            .SelectMany(segment => grid.WalkableSourcesNearSegment(segment, grid.CellSize, exitGroupId: 0))
+            .ToList();
+
+        Assert.Contains(sources, source => source.ExitPoint.Y > 0.5);
+        Assert.Contains(sources, source => source.ExitPoint.Y < -0.5);
+
+        var path = DistanceMapCalculator.FindPath(
+            grid,
+            DistanceMapCalculator.Compute(grid, sources),
+            new WorldPoint(8, -1.5));
+
+        Assert.NotNull(path);
+        Assert.True(path!.Points[^1].Y < -0.5);
+
+        static WorldPoint CirclePoint(int index)
+        {
+            double angle = 2 * Math.PI * index / sideCount;
+            return new WorldPoint(10 * Math.Cos(angle), 10 * Math.Sin(angle));
+        }
+    }
+
+    [Fact]
     public void GetPath_SourceCellReturnsOnePoint()
     {
         var grid = WalkabilityGrid.Build(Rectangle(0, 0, 4, 4), cellSize: 0.5, marginCells: 0);

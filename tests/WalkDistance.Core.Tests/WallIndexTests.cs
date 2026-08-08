@@ -190,4 +190,41 @@ public class WallIndexTests
 
         Assert.Equal(new WorldPoint(15, 0), route[^1]);
     }
+
+    [Fact]
+    public void TraceFixedLengthFromMidpoint_TracesHalfTheLengthInBothDirections()
+    {
+        var index = WallIndex.Build(
+        [
+            new Segment(new WorldPoint(0, 0), new WorldPoint(10, 0)),
+            new Segment(new WorldPoint(10, 0), new WorldPoint(10, 10)),
+        ]);
+
+        var route = index.TraceFixedLengthFromMidpoint(
+            new WorldPoint(8, 0.2), length: 6, tolerance: 0.5);
+
+        Assert.Equal(
+            [
+                new WorldPoint(5, 0),
+                new WorldPoint(8, 0),
+                new WorldPoint(10, 0),
+                new WorldPoint(10, 1),
+            ],
+            route);
+    }
+
+    [Fact]
+    public void TraceFixedLengthFromMidpoint_TowardPointPreservesPathOrientation()
+    {
+        var index = WallIndex.Build(
+            [new Segment(new WorldPoint(0, 0), new WorldPoint(20, 0))]);
+
+        var route = index.TraceFixedLengthFromMidpoint(
+            new WorldPoint(10, 0), length: 6, tolerance: 0.1,
+            towardPoint: new WorldPoint(0, 0));
+
+        Assert.Equal(
+            [new WorldPoint(13, 0), new WorldPoint(10, 0), new WorldPoint(7, 0)],
+            route);
+    }
 }

@@ -330,19 +330,38 @@ public class AppSourceTests
     }
 
     [Fact]
-    public void MainWindow_SecondClick_TracesFixedLengthWhenLengthBoxHasAValue()
+    public void MainWindow_FixedLengthClick_CommitsTheCurrentPreviewWithoutRetracing()
     {
         string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasLeftClick");
+
         Assert.Contains("TryGetFixedExitLength(out double fixedLength)", method);
-        Assert.Contains("_wallIndex.TraceFixedLength(pendingStart, worldPoint, fixedLength, SnapToleranceWorld())", method);
+        Assert.Contains("_exitEditor.CommitPath(previewRoute)", method);
+        Assert.DoesNotContain("TraceFixedLengthFromMidpoint", method);
     }
 
     [Fact]
-    public void MainWindow_MouseMovePreview_TracesFixedLengthRouteWhenLengthBoxHasAValue()
+    public void MainWindow_MouseMovePreview_UsesPointerAsFixedExitMidpointWithoutPendingStart()
     {
         string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasMouseMove");
-        Assert.Contains("TryGetFixedExitLength(out double fixedLength)", method);
-        Assert.Contains("_wallIndex.TraceFixedLength(pendingStart, worldPoint, fixedLength, SnapToleranceWorld())", method);
+        int fixedLength = method.IndexOf("TryGetFixedExitLength(out double fixedLength)", StringComparison.Ordinal);
+        int pendingStart = method.IndexOf("_exitEditor.PendingStart", StringComparison.Ordinal);
+
+        Assert.True(fixedLength >= 0 && fixedLength < pendingStart,
+            "Fixed-length preview must not wait for the first legacy click.");
+        Assert.Contains(
+            "_wallIndex.TraceFixedLengthFromMidpoint(worldPoint, fixedLength, SnapToleranceWorld())",
+            method);
+    }
+
+    [Fact]
+    public void MainWindow_Redraw_ShowsFixedPreviewWithoutALegacyPendingPoint()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
+        int preview = method.IndexOf("if (_previewRoute is { Count: > 1 } previewRoute)", StringComparison.Ordinal);
+        int pending = method.IndexOf("if (_exitEditor.PendingStart is { } pendingStart)", StringComparison.Ordinal);
+
+        Assert.True(preview >= 0 && preview < pending);
+        Assert.Contains("AddPath(previewRoute, Brushes.LightGreen, 2)", method);
     }
 
     [Fact]
@@ -388,8 +407,10 @@ public class AppSourceTests
         Assert.Contains("휠: 포인터 중심 확대/축소", xaml);
         Assert.Contains("가운데 버튼 드래그: 화면 이동", xaml);
         Assert.Contains("가운데 버튼 더블클릭", xaml);
-        Assert.Contains("Esc: 모드 종료/그리기 취소", xaml);
-        Assert.Contains("벽 클릭: 기존 길이/방향으로 이동", xaml);
+        Assert.Contains("Esc: 모드 종료/그리기 취소/조회 지우기", xaml);
+        Assert.Contains("벽 클릭 위치가 중심", xaml);
+        Assert.Contains("마우스 위치가 중심", xaml);
+        Assert.Contains("미리보기 그대로 클릭해 확정", xaml);
     }
 
     [Fact]
@@ -451,16 +472,22 @@ public class AppSourceTests
     }
 
     [Fact]
-    public void MainWindow_Escape_ExitsAddModeAndCancelsPendingDraft()
+    public void MainWindow_Escape_ExitsAddModeAndClearsOnlyTheQueryOverlay()
     {
         string xaml = ReadAppFile("MainWindow.xaml");
         string keyDown = ReadAppMethod("MainWindow.xaml.cs", "private void OnWindowPreviewKeyDown");
         string modeChanged = ReadAppMethod("MainWindow.xaml.cs", "private void OnAddExitModeChanged");
 
         Assert.Contains("PreviewKeyDown=\"OnWindowPreviewKeyDown\"", xaml);
-        Assert.Contains("e.Key == Key.Escape && _addExitMode", keyDown);
+        Assert.Contains("e.Key != Key.Escape", keyDown);
         Assert.Contains("AddExitToggle.IsChecked = false", keyDown);
+        Assert.Contains("_queryPoint = null", keyDown);
+        Assert.Contains("_queryDistance = null", keyDown);
+        Assert.Contains("_queryPathPoints = null", keyDown);
         Assert.Contains("e.Handled = true", keyDown);
+        Assert.DoesNotContain("_exitEditor.Clear", keyDown);
+        Assert.DoesNotContain("_result = null", keyDown);
+        Assert.DoesNotContain("InvalidateAnalysis", keyDown);
         Assert.Contains("_exitEditor.HandleRightClick()", modeChanged);
         Assert.Contains("_previewRoute = null", modeChanged);
     }

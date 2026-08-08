@@ -228,6 +228,38 @@ public class ExitLineEditorTests
     }
 
     [Fact]
+    public void CommitPath_CommitsTheExactPreviewWithoutAPendingLegacyPoint()
+    {
+        var editor = new ExitLineEditor();
+        IReadOnlyList<WorldPoint> preview =
+        [
+            new WorldPoint(2, 0),
+            new WorldPoint(5, 0),
+            new WorldPoint(5, 2),
+        ];
+
+        Assert.True(editor.CommitPath(preview));
+
+        Assert.Equal(preview, Assert.Single(editor.Paths));
+        Assert.Equal(ExitDrawState.Idle, editor.State);
+    }
+
+    [Fact]
+    public void CommitPath_ReplacesAnyPendingLegacyDraftAndReturnsToIdle()
+    {
+        var editor = new ExitLineEditor();
+        editor.HandleLeftClick(new WorldPoint(100, 100));
+        IReadOnlyList<WorldPoint> preview =
+        [new WorldPoint(2, 0), new WorldPoint(5, 0)];
+
+        Assert.True(editor.CommitPath(preview));
+
+        Assert.Equal(preview, Assert.Single(editor.Paths));
+        Assert.Null(editor.PendingStart);
+        Assert.Equal(ExitDrawState.Idle, editor.State);
+    }
+
+    [Fact]
     public void LoadPaths_RestoresEveryRoutePoint()
     {
         var editor = new ExitLineEditor();
@@ -245,7 +277,7 @@ public class ExitLineEditorTests
     }
 
     [Fact]
-    public void TryRelocateSelected_SnapsAndRetracesSameLengthInOriginalDirection()
+    public void TryRelocateSelected_UsesClickedPointAsMidpointAndPreservesLengthAndOrientation()
     {
         var walls = WallIndex.Build(
         [
@@ -259,7 +291,12 @@ public class ExitLineEditorTests
         Assert.True(editor.TryRelocateSelected(walls, new WorldPoint(8, 0.2), 0.5));
 
         Assert.Equal(
-            [new WorldPoint(8, 0), new WorldPoint(10, 0), new WorldPoint(10, 3)],
+            [
+                new WorldPoint(5.5, 0),
+                new WorldPoint(8, 0),
+                new WorldPoint(10, 0),
+                new WorldPoint(10, 0.5),
+            ],
             Assert.Single(editor.Paths));
         Assert.Equal(0, editor.SelectedIndex);
     }

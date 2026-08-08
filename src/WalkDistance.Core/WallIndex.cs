@@ -139,8 +139,69 @@ public sealed class WallIndex
             return [start];
         }
 
-        var segment = _walls[onSegment.Value.SegmentIndex];
-        var visited = new HashSet<int> { onSegment.Value.SegmentIndex };
+        return TraceFixedLength(onSegment.Value.SegmentIndex, start, towardPoint, length);
+    }
+
+    /// <summary>
+    /// Snaps <paramref name="midpoint"/> to a wall and traces half of the
+    /// requested length in each direction. The optional toward point controls
+    /// start-to-end orientation; otherwise the snapped wall's orientation is
+    /// used. A full-length route is required.
+    /// </summary>
+    public IReadOnlyList<WorldPoint> TraceFixedLengthFromMidpoint(
+        WorldPoint midpoint,
+        double length,
+        double tolerance,
+        WorldPoint? towardPoint = null)
+    {
+        if (!double.IsFinite(length) || length <= 0 ||
+            !double.IsFinite(midpoint.X) || !double.IsFinite(midpoint.Y) ||
+            _walls.Count == 0)
+        {
+            return [midpoint];
+        }
+
+        var snap = TrySnapToNearest(midpoint, tolerance);
+        if (snap is null)
+        {
+            return [midpoint];
+        }
+
+        var center = snap.Value.Point;
+        var segment = _walls[snap.Value.SegmentIndex];
+        var forwardTarget = towardPoint ?? new WorldPoint(
+            center.X + segment.End.X - segment.Start.X,
+            center.Y + segment.End.Y - segment.Start.Y);
+        if (forwardTarget == center)
+        {
+            forwardTarget = segment.End;
+        }
+        var backwardTarget = new WorldPoint(
+            (2 * center.X) - forwardTarget.X,
+            (2 * center.Y) - forwardTarget.Y);
+        double halfLength = length / 2;
+        var backward = TraceFixedLength(
+            snap.Value.SegmentIndex, center, backwardTarget, halfLength);
+        var forward = TraceFixedLength(
+            snap.Value.SegmentIndex, center, forwardTarget, halfLength);
+        double lengthTolerance = Math.Max(1e-9, length * 1e-9);
+        if (Math.Abs(PathLength(backward) - halfLength) > lengthTolerance ||
+            Math.Abs(PathLength(forward) - halfLength) > lengthTolerance)
+        {
+            return [center];
+        }
+
+        return backward.Reverse().Concat(forward.Skip(1)).ToArray();
+    }
+
+    private IReadOnlyList<WorldPoint> TraceFixedLength(
+        int initialSegmentIndex,
+        WorldPoint start,
+        WorldPoint towardPoint,
+        double length)
+    {
+        var segment = _walls[initialSegmentIndex];
+        var visited = new HashSet<int> { initialSegmentIndex };
         var points = new List<WorldPoint> { start };
 
         WorldPoint previous = start;
@@ -152,7 +213,17 @@ public sealed class WallIndex
             double hop = Distance(previous, next);
             if (hop <= 1e-12)
             {
-                break;
+                var zeroHopContinuation = FindContinuation(
+                    next,
+                    SquaredDistance(next, segment.Start) <= 1e-24 ? segment.End : segment.Start,
+                    visited);
+                if (zeroHopContinuation is null)
+                {
+                    break;
+                }
+                next = zeroHopContinuation.Value.FarEnd;
+                visited.Add(zeroHopContinuation.Value.Index);
+                continue;
             }
 
             if (hop >= remaining)
@@ -177,6 +248,9 @@ public sealed class WallIndex
 
         return points;
     }
+
+    private static double PathLength(IReadOnlyList<WorldPoint> path) =>
+        path.Zip(path.Skip(1)).Sum(segment => Distance(segment.First, segment.Second));
 
     private (int Index, WorldPoint FarEnd)? FindContinuation(
         WorldPoint vertex, WorldPoint incomingFrom, HashSet<int> visited)
