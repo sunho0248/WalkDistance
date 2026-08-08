@@ -360,6 +360,7 @@ public partial class MainWindow : Window
         _queryPoint = null;
         _queryDistance = null;
         _queryPathPoints = null;
+        _exitEditor.ClearSelection();
         if (clearedQuery)
         {
             StatusText.Text = exitedAddMode
@@ -684,11 +685,6 @@ public partial class MainWindow : Window
 
             if (_result.UnreachableCellCount > 0)
             {
-                MessageBox.Show(this,
-                    $"출구에서 도달할 수 없는 보행 셀 {_result.UnreachableCellCount:N0}개는 최대 보행거리에서 제외했습니다.",
-                    "도달 불가능 영역",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
                 StatusText.Text += $" · 도달 불가 {_result.UnreachableCellCount:N0}셀 제외";
             }
 

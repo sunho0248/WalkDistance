@@ -483,7 +483,7 @@ public class AppSourceTests
     }
 
     [Fact]
-    public void MainWindow_Escape_ExitsAddModeAndClearsOnlyTheQueryOverlay()
+    public void MainWindow_Escape_ExitsAddModeAndClearsQueryAndExitSelectionWithoutDeletingExits()
     {
         string xaml = ReadAppFile("MainWindow.xaml");
         string keyDown = ReadAppMethod("MainWindow.xaml.cs", "private void OnWindowPreviewKeyDown");
@@ -495,12 +495,25 @@ public class AppSourceTests
         Assert.Contains("_queryPoint = null", keyDown);
         Assert.Contains("_queryDistance = null", keyDown);
         Assert.Contains("_queryPathPoints = null", keyDown);
+        Assert.Contains("_exitEditor.ClearSelection()", keyDown);
         Assert.Contains("e.Handled = true", keyDown);
-        Assert.DoesNotContain("_exitEditor.Clear", keyDown);
+        Assert.DoesNotContain("_exitEditor.Clear()", keyDown);
+        Assert.DoesNotContain("_exitEditor.DeleteSelected", keyDown);
         Assert.DoesNotContain("_result = null", keyDown);
         Assert.DoesNotContain("InvalidateAnalysis", keyDown);
         Assert.Contains("_exitEditor.HandleRightClick()", modeChanged);
         Assert.Contains("_previewRoute = null", modeChanged);
+    }
+
+    [Fact]
+    public void MainWindow_SuccessfulCalculation_ReportsUnreachableCellsOnlyInStatusText()
+    {
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        string success = Slice(source, "_result = DistanceMapCalculator.Compute", "catch (GridSizeLimitExceededException ex)");
+
+        Assert.Contains("_result.UnreachableCellCount > 0", success);
+        Assert.Contains("StatusText.Text +=", success);
+        Assert.DoesNotContain("MessageBox.Show", success);
     }
 
     [Fact]

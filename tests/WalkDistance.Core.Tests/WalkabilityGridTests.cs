@@ -124,6 +124,21 @@ public class WalkabilityGridTests
     }
 
     [Fact]
+    public void DefaultCellCap_IsExactlyTenMillionAndReportedByLimitErrors()
+    {
+        Assert.Equal(10_000_000, WalkabilityGrid.DefaultMaxCellCount);
+
+        var exception = Assert.Throws<GridSizeLimitExceededException>(() =>
+            WalkabilityGrid.Build(
+                [new Segment(new WorldPoint(0, 0), new WorldPoint(100, 100))],
+                cellSize: 0.001,
+                marginCells: 0));
+
+        Assert.Equal(10_000_000, exception.MaxCellCount);
+        Assert.Contains("10,000,000", exception.Message);
+    }
+
+    [Fact]
     public void Build_RejectsExcessiveCellCountBeforeAllocation()
     {
         var walls = new List<Segment>

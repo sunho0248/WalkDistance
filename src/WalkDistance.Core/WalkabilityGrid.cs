@@ -18,7 +18,7 @@ public sealed class GridSizeLimitExceededException : InvalidOperationException
 /// </summary>
 public sealed class WalkabilityGrid
 {
-    public const int DefaultMaxCellCount = 4_000_000;
+    public const int DefaultMaxCellCount = 10_000_000;
 
     public double CellSize { get; }
     public Bounds Bounds { get; }
