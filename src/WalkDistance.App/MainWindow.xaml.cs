@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -28,6 +29,8 @@ public partial class MainWindow : Window
     private WalkabilityGrid? _grid;
     private DistanceMapResult? _result;
     private string? _dxfPath;
+    private string? _projectPath;
+    private string? _startupProjectPath;
     private double _metersPerDrawingUnit = 1;
     private bool _addExitMode;
     private bool _isPanning;
@@ -45,14 +48,17 @@ public partial class MainWindow : Window
     private IReadOnlyList<DistanceContour> _thresholdContours = [];
     private WriteableBitmap? _heatmapBitmap;
     private bool _isCalculating;
+    private bool _isDirty;
 
     public MainWindow()
     {
         InitializeComponent();
+        UpdateTitle();
     }
 
     private void OnOpenDxf(object sender, RoutedEventArgs e)
     {
+        if (!ConfirmDiscardChanges()) return;
         var dialog = new OpenFileDialog { Filter = "DXF 파일|*.dxf|모든 파일|*.*" };
         if (dialog.ShowDialog() != true)
         {
@@ -72,7 +78,9 @@ public partial class MainWindow : Window
             CacheWallGeometry();
             _metersPerDrawingUnit = document.MetersPerDrawingUnit;
             _dxfPath = dialog.FileName;
+            _projectPath = null;
             ResetAnalysis(clearExits: true);
+            SetDirty(false);
             StatusText.Text = $"{System.IO.Path.GetFileName(dialog.FileName)} 불러옴 · 벽 선분 {_walls.Count:N0}개 · 1 도면 단위 = {_metersPerDrawingUnit:G6} m";
             FitView();
             Redraw();
@@ -96,55 +104,78 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnSaveProject(object sender, RoutedEventArgs e)
+    private void OnSaveCurrentProject(object sender, ExecutedRoutedEventArgs e) => SaveProject(saveAs: false);
+
+    private void OnSaveProjectAs(object sender, ExecutedRoutedEventArgs e) => SaveProject(saveAs: true);
+
+    private bool SaveProject(bool saveAs)
     {
         if (_walls.Count == 0)
         {
             MessageBox.Show(this, "먼저 DXF 또는 프로젝트를 불러오세요.", "알림");
-            return;
+            return false;
         }
 
         double? cellSize = ParseCellSize();
         if (cellSize is null)
         {
-            return;
+            return false;
         }
 
-        var dialog = new SaveFileDialog { Filter = "보행거리 프로젝트|*.json" };
-        if (dialog.ShowDialog() != true)
+        string? path = saveAs ? null : _projectPath;
+        if (path is null)
         {
-            return;
+            var dialog = new SaveFileDialog
+            {
+                Filter = "보행거리 프로젝트|*.walkdistance",
+                DefaultExt = ".walkdistance",
+                AddExtension = true,
+            };
+            if (dialog.ShowDialog() != true) return false;
+            path = dialog.FileName;
         }
 
         try
         {
-            ProjectFile.Save(dialog.FileName, new ProjectData(
-                Version: 4,
+            var analysis = _grid is not null && _result is not null && _grid.CellSize == cellSize.Value
+                ? DistanceMapCache.Create(_grid, _result, _queryPoint, _queryDistance,
+                    _farthestPathPoints, _queryPathPoints)
+                : null;
+            ProjectFile.Save(path, new ProjectData(
+                Version: 5,
                 CellSize: cellSize.Value,
                 MetersPerDrawingUnit: _metersPerDrawingUnit,
                 Walls: _walls.ToList(),
                 Exits: [],
                 DxfPath: _dxfPath,
-                ExitPaths: _exitEditor.Paths.Select(path => path.ToList()).ToList()));
-            StatusText.Text = $"프로젝트 저장됨: {System.IO.Path.GetFileName(dialog.FileName)} (DXF 없이 다시 열 수 있음)";
+                ExitPaths: _exitEditor.Paths.Select(exitPath => exitPath.ToList()).ToList(),
+                Analysis: analysis));
+            _projectPath = path;
+            SetDirty(false);
+            StatusText.Text = $"프로젝트 저장됨: {System.IO.Path.GetFileName(path)} (DXF 없이 다시 열 수 있음)";
+            return true;
         }
         catch (Exception ex)
         {
             MessageBox.Show(this, $"프로젝트 저장 실패: {ex.Message}", "오류", MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
         }
     }
 
     private void OnOpenProject(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFileDialog { Filter = "보행거리 프로젝트|*.json|모든 파일|*.*" };
-        if (dialog.ShowDialog() != true)
+        if (!ConfirmDiscardChanges()) return;
+        string? path = _startupProjectPath;
+        _startupProjectPath = null;
+        if (path is null)
         {
-            return;
+            var dialog = new OpenFileDialog { Filter = "보행거리 프로젝트|*.walkdistance|모든 파일|*.*" };
+            if (dialog.ShowDialog() != true) return;
+            path = dialog.FileName;
         }
-
         try
         {
-            var data = LoadProjectWithUnitSelection(dialog.FileName);
+            var data = LoadProjectWithUnitSelection(path);
             if (data is null)
             {
                 return;
@@ -154,11 +185,24 @@ public partial class MainWindow : Window
             _wallIndex = WallIndex.Build(_walls);
             CacheWallGeometry();
             _dxfPath = data.DxfPath;
+            _projectPath = path;
             _metersPerDrawingUnit = data.MetersPerDrawingUnit;
             CellSizeBox.Text = data.CellSize.ToString(CultureInfo.InvariantCulture);
             ResetAnalysis(clearExits: true);
             _exitEditor.LoadPaths(data.ExitPaths!);
-            StatusText.Text = $"프로젝트 v{data.Version} 불러옴: {System.IO.Path.GetFileName(dialog.FileName)} · 출구 {_exitEditor.Segments.Count}개";
+            if (data.Analysis is { } cache)
+            {
+                _grid = WalkabilityGrid.Build(_walls, data.CellSize);
+                var restored = cache.Restore(_grid);
+                _result = restored.Result;
+                _queryPoint = restored.QueryPoint;
+                _queryDistance = restored.QueryDistance;
+                _farthestPathPoints = restored.FarthestPath;
+                _queryPathPoints = restored.QueryPath;
+                RefreshAnalysisCaches();
+            }
+            SetDirty(false);
+            StatusText.Text = $"프로젝트 v{data.Version} 불러옴: {System.IO.Path.GetFileName(path)} · 출구 {_exitEditor.Segments.Count}개";
             FitView();
             Redraw();
         }
@@ -166,6 +210,12 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(this, $"프로젝트 불러오기 실패: {ex.Message}", "오류", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    public void OpenProject(string path)
+    {
+        _startupProjectPath = path;
+        OnOpenProject(this, new RoutedEventArgs());
     }
 
     private ProjectData? LoadProjectWithUnitSelection(string path)
@@ -182,6 +232,28 @@ public partial class MainWindow : Window
     }
 
     private void OnExit(object sender, RoutedEventArgs e) => Close();
+
+    private void OnWindowClosing(object? sender, CancelEventArgs e) => e.Cancel = !ConfirmDiscardChanges();
+
+    private bool ConfirmDiscardChanges()
+    {
+        if (!_isDirty) return true;
+        var choice = MessageBox.Show(this, "변경 내용을 저장할까요?", "저장하지 않은 변경",
+            MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
+        return choice == MessageBoxResult.No || choice == MessageBoxResult.Yes && SaveProject(saveAs: false);
+    }
+
+    private void SetDirty(bool dirty)
+    {
+        _isDirty = dirty;
+        UpdateTitle();
+    }
+
+    private void UpdateTitle()
+    {
+        string name = _projectPath is not null ? System.IO.Path.GetFileName(_projectPath) : "Untitled";
+        Title = $"{name}{(_isDirty ? "*" : "")} - 보행거리 계산";
+    }
 
     private void OnAddExitModeChanged(object sender, RoutedEventArgs e)
     {
@@ -213,6 +285,7 @@ public partial class MainWindow : Window
 
     private void OnClearExits(object sender, RoutedEventArgs e)
     {
+        if (_exitEditor.Segments.Count == 0) return;
         ResetAnalysis(clearExits: true);
         StatusText.Text = "모든 출구가 초기화되었습니다.";
         Redraw();
@@ -498,6 +571,11 @@ public partial class MainWindow : Window
         ValidateThresholdInput();
     }
 
+    private void OnCellSizeChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_walls.Count > 0) SetDirty(true);
+    }
+
     private void ValidateThresholdInput()
     {
         if (TryParseThreshold(out double? threshold))
@@ -731,6 +809,7 @@ public partial class MainWindow : Window
                 StatusText.Text += $" · 도달 불가 {_result.UnreachableCellCount:N0}셀 제외";
             }
 
+            SetDirty(true);
             Redraw();
         }
         catch (GridSizeLimitExceededException ex)
@@ -786,6 +865,7 @@ public partial class MainWindow : Window
         _farthestPathPoints = null;
         _queryPathPoints = null;
         ClearAnalysisCaches();
+        if (_walls.Count > 0) SetDirty(true);
     }
 
     private void RefreshAnalysisCaches()
@@ -950,6 +1030,8 @@ public partial class MainWindow : Window
         if (_previewRoute is { Count: > 1 } previewRoute)
         {
             AddPath(previewRoute, Brushes.LightGreen, 2);
+            AddMarker(_transform.ToScreen(previewRoute[0]), 4, Brushes.Red, "출구 미리보기 시작점");
+            AddMarker(_transform.ToScreen(previewRoute[^1]), 4, Brushes.Red, "출구 미리보기 끝점");
         }
 
         if (_exitEditor.PendingStart is { } pendingStart)

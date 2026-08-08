@@ -6,13 +6,22 @@
         xmlns:local="clr-namespace:WalkDistance.App"
         mc:Ignorable="d"
         Title="보행거리 계산" Height="700" Width="1000" MinHeight="500" MinWidth="760"
-        PreviewKeyDown="OnWindowPreviewKeyDown">
+        PreviewKeyDown="OnWindowPreviewKeyDown" Closing="OnWindowClosing">
+    <Window.InputBindings>
+        <KeyBinding Gesture="Ctrl+S" Command="Save"/>
+        <KeyBinding Gesture="Ctrl+Shift+S" Command="SaveAs"/>
+    </Window.InputBindings>
+    <Window.CommandBindings>
+        <CommandBinding Command="Save" Executed="OnSaveCurrentProject"/>
+        <CommandBinding Command="SaveAs" Executed="OnSaveProjectAs"/>
+    </Window.CommandBindings>
     <DockPanel>
         <Menu DockPanel.Dock="Top">
             <MenuItem Header="파일(_F)">
                 <MenuItem Header="DXF 열기(_O)" Click="OnOpenDxf"/>
                 <Separator/>
-                <MenuItem Header="프로젝트 저장(_S)" Click="OnSaveProject"/>
+                <MenuItem Header="프로젝트 저장(_S)" Command="Save" InputGestureText="Ctrl+S"/>
+                <MenuItem Header="다른 이름으로 저장(_A)" Command="SaveAs" InputGestureText="Ctrl+Shift+S"/>
                 <MenuItem Header="프로젝트 열기(_P)" Click="OnOpenProject"/>
                 <Separator/>
                 <MenuItem Header="종료(_X)" Click="OnExit"/>
@@ -40,7 +49,8 @@
                          ToolTip="비우면 두 번 클릭하는 직선 출구 · 값을 입력하면 마우스 위치가 중심인 전체 길이를 벽 따라 실시간 미리보기 · 클릭하면 미리보기 그대로 확정"/>
                 <Separator/>
                 <TextBlock Text="셀 크기(m):" VerticalAlignment="Center" Margin="4,0"/>
-                <TextBox x:Name="CellSizeBox" Width="50" Text="0.2" VerticalAlignment="Center"/>
+                <TextBox x:Name="CellSizeBox" Width="50" Text="0.2" VerticalAlignment="Center"
+                         TextChanged="OnCellSizeChanged"/>
                 <Separator/>
                 <TextBlock Text="기준거리(m):" VerticalAlignment="Center" Margin="4,0"/>
                 <TextBox x:Name="ThresholdBox" Width="55" VerticalAlignment="Center"
@@ -66,6 +76,8 @@
                     MouseMove="OnCanvasMouseMove"
                     MouseLeftButtonDown="OnCanvasLeftClick"
                     MouseRightButtonDown="OnCanvasRightClick"
+                    PreviewMouseDown="OnCanvasMouseDown"
+                    PreviewMouseUp="OnCanvasMouseUp"
                     MouseDown="OnCanvasMouseDown"
                     MouseUp="OnCanvasMouseUp"
                     MouseWheel="OnCanvasMouseWheel"

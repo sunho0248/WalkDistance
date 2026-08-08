@@ -3,6 +3,74 @@ namespace WalkDistance.Core.Tests;
 public class AppSourceTests
 {
     [Fact]
+    public void MainWindow_TitleShowsProjectNameAndDirtyMarker()
+    {
+        string source = ReadAppFile("MainWindow.xaml.cs");
+
+        Assert.Contains("private bool _isDirty", source);
+        Assert.Contains("System.IO.Path.GetFileName(_projectPath) : \"Untitled\"", source);
+        Assert.Contains("_isDirty ? \"*\" : \"\"", source);
+        Assert.Contains("private void SetDirty(bool dirty)", source);
+    }
+
+    [Fact]
+    public void MainWindow_GuardsDestructiveTransitionsAndOnlyCleansAfterSuccessfulSaveOrLoad()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+        string source = ReadAppFile("MainWindow.xaml.cs");
+
+        Assert.Contains("Closing=\"OnWindowClosing\"", xaml);
+        Assert.Contains("MessageBoxButton.YesNoCancel", source);
+        Assert.Contains("if (!ConfirmDiscardChanges())", source);
+        Assert.Contains("SetDirty(false);", source);
+        Assert.Contains("private bool SaveProject(bool saveAs)", source);
+    }
+
+    [Fact]
+    public void MainWindow_ProjectMutationsMarkDirtyButViewChangesDoNot()
+    {
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        string xaml = ReadAppFile("MainWindow.xaml");
+        string invalidate = ReadAppMethod("MainWindow.xaml.cs", "private void InvalidateAnalysis");
+        string threshold = ReadAppMethod("MainWindow.xaml.cs", "private void ApplyThresholdInput");
+        string overlay = ReadAppMethod("MainWindow.xaml.cs", "private void OnOverlayToggleChanged");
+
+        Assert.Contains("SetDirty(true);", invalidate);
+        Assert.Contains("TextChanged=\"OnCellSizeChanged\"", xaml);
+        Assert.DoesNotContain("SetDirty", threshold);
+        Assert.DoesNotContain("SetDirty", overlay);
+    }
+
+    [Fact]
+    public void MainWindow_UsesWalkdistanceAndSeparateSaveCommands()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+        string source = ReadAppFile("MainWindow.xaml.cs");
+
+        Assert.Contains("Gesture=\"Ctrl+S\"", xaml);
+        Assert.Contains("Gesture=\"Ctrl+Shift+S\"", xaml);
+        Assert.Contains("Header=\"다른 이름으로 저장", xaml);
+        Assert.Contains("*.walkdistance", source);
+        Assert.Contains("_projectPath", source);
+        Assert.Contains("SaveProject(saveAs: false)", source);
+        Assert.Contains("SaveProject(saveAs: true)", source);
+    }
+
+    [Fact]
+    public void App_RegistersPerUserAssociationAndOpensStartupProjectAfterWindowInitialization()
+    {
+        string app = ReadAppFile("App.xaml.cs");
+        string xaml = ReadAppFile("App.xaml");
+
+        Assert.DoesNotContain("StartupUri", xaml);
+        Assert.Contains("Registry.CurrentUser", app);
+        Assert.Contains("Software\\Classes\\.walkdistance", app);
+        Assert.DoesNotContain("Software\\Classes\\.json", app);
+        Assert.Contains("Environment.ProcessPath", app);
+        Assert.Contains("OnStartup", app);
+        Assert.Contains("window.OpenProject(path)", app);
+    }
+    [Fact]
     public void MainWindow_HasDefaultOnIndependentMapAndPathToggles()
     {
         string xaml = ReadAppFile("MainWindow.xaml");
@@ -421,6 +489,15 @@ public class AppSourceTests
     }
 
     [Fact]
+    public void MainWindow_Redraw_ShowsRedMarkersAtBothPreviewEnds()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
+
+        Assert.Contains("AddMarker(_transform.ToScreen(previewRoute[0]), 4, Brushes.Red", method);
+        Assert.Contains("AddMarker(_transform.ToScreen(previewRoute[^1]), 4, Brushes.Red", method);
+    }
+
+    [Fact]
     public void MainWindow_MiddleButtonDoubleClick_FitsViewToWallBounds()
     {
         string xaml = ReadAppFile("MainWindow.xaml");
@@ -444,6 +521,8 @@ public class AppSourceTests
         string pan = Slice(source, "public ViewTransform PanBy", "public Point ToScreen");
 
         Assert.Contains("MouseUp=\"OnCanvasMouseUp\"", xaml);
+        Assert.Contains("PreviewMouseDown=\"OnCanvasMouseDown\"", xaml);
+        Assert.Contains("PreviewMouseUp=\"OnCanvasMouseUp\"", xaml);
         Assert.Contains("DrawingCanvas.CaptureMouse()", down);
         Assert.Contains("e.ClickCount == 2", down);
         Assert.Contains("FitView();", down);

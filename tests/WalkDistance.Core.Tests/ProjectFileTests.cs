@@ -10,6 +10,33 @@ public sealed class ProjectFileTests : IDisposable
     public ProjectFileTests() => Directory.CreateDirectory(_directory);
 
     [Fact]
+    public void Version5_RoundTripsCachedAnalysis()
+    {
+        var walls = Rectangle(0, 0, 10, 10);
+        var grid = WalkabilityGrid.Build(walls, 1, marginCells: 0);
+        var source = grid.NearestWalkableCell(new WorldPoint(5, 5))!.Value;
+        var result = DistanceMapCalculator.Compute(grid, new[] { source });
+        var cache = DistanceMapCache.Create(grid, result,
+            new WorldPoint(6, 6), 2.5,
+            [new WorldPoint(5, 5), new WorldPoint(6, 6)],
+            [new WorldPoint(5, 5), new WorldPoint(7, 7)]);
+        var path = Path.Combine(_directory, "cached.walkdistance");
+        var expected = new ProjectData(5, 1, 1, walls, [], Analysis: cache);
+
+        ProjectFile.Save(path, expected);
+        var actual = ProjectFile.Load(path);
+        var restored = actual.Analysis!.Restore(grid);
+
+        Assert.Equal(5, actual.Version);
+        Assert.Equal(result.MaxDistance, restored.Result.MaxDistance);
+        Assert.Equal(result.FarthestCell, restored.Result.FarthestCell);
+        Assert.Equal(result.Distances[source.Row, source.Col], restored.Result.Distances[source.Row, source.Col]);
+        Assert.Equal(cache.QueryPoint, actual.Analysis.QueryPoint);
+        Assert.Equal(cache.QueryPath, actual.Analysis.QueryPath);
+        Assert.Equal(cache.FarthestPath, actual.Analysis.FarthestPath);
+    }
+
+    [Fact]
     public void Version4_RoundTripsMultiPointExitPathsWithoutSourceDxf()
     {
         var dxfPath = Path.Combine(_directory, "room.dxf");
@@ -46,7 +73,7 @@ public sealed class ProjectFileTests : IDisposable
         File.Delete(dxfPath);
         var actual = ProjectFile.Load(projectPath);
 
-        Assert.Equal(4, actual.Version);
+        Assert.Equal(5, actual.Version);
         Assert.Equal(expected.Walls, actual.Walls);
         Assert.Equal(expected.Exits, actual.Exits);
         Assert.Equal(exitPath, Assert.Single(actual.ExitPaths!));
@@ -72,7 +99,7 @@ public sealed class ProjectFileTests : IDisposable
 
         var project = ProjectFile.Load(projectPath);
 
-        Assert.Equal(4, project.Version);
+        Assert.Equal(5, project.Version);
         Assert.Equal(exit, Assert.Single(project.Exits));
         Assert.Equal(new[] { exit.Start, exit.End }, Assert.Single(project.ExitPaths!));
     }
@@ -104,7 +131,7 @@ public sealed class ProjectFileTests : IDisposable
         var legacyResult = DistanceMapCalculator.Compute(grid, new[] { legacySource });
         var migratedResult = DistanceMapCalculator.Compute(grid, migratedSources);
 
-        Assert.Equal(4, project.Version);
+        Assert.Equal(5, project.Version);
         Assert.Equal(new Segment(pointExit, pointExit), migratedExit);
         Assert.Equal(new[] { pointExit, pointExit }, Assert.Single(project.ExitPaths!));
         Assert.Equal(legacySource, Assert.Single(migratedSources));
@@ -138,7 +165,7 @@ public sealed class ProjectFileTests : IDisposable
 
         var project = ProjectFile.Load(projectPath);
 
-        Assert.Equal(4, project.Version);
+        Assert.Equal(5, project.Version);
         Assert.Single(project.Walls);
         Assert.Equal(new WorldPoint(4, 0), project.Walls[0].End);
         Assert.Equal(new Segment(new WorldPoint(1, 1), new WorldPoint(1, 1)), project.Exits.Single());
@@ -162,7 +189,7 @@ public sealed class ProjectFileTests : IDisposable
     public void UnsupportedVersion_IsRejected()
     {
         var projectPath = Path.Combine(_directory, "future.json");
-        File.WriteAllText(projectPath, "{\"Version\":5}");
+        File.WriteAllText(projectPath, "{\"Version\":6}");
 
         Assert.Throws<InvalidDataException>(() => ProjectFile.Load(projectPath));
     }

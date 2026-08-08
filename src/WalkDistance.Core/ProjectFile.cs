@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace WalkDistance.Core;
 
@@ -9,7 +10,8 @@ public sealed record ProjectData(
     List<Segment> Walls,
     List<Segment> Exits,
     string? DxfPath = null,
-    List<List<WorldPoint>>? ExitPaths = null);
+    List<List<WorldPoint>>? ExitPaths = null,
+    DistanceMapCache? Analysis = null);
 
 public static class ProjectFile
 {
@@ -17,11 +19,12 @@ public static class ProjectFile
     {
         PropertyNameCaseInsensitive = true,
         WriteIndented = true,
+        NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
     };
 
     public static void Save(string path, ProjectData data)
     {
-        var current = NormalizeCurrent(data with { Version = 4 });
+        var current = NormalizeCurrent(data with { Version = 5 });
         ValidateCurrentVersion(current);
         File.WriteAllText(path, JsonSerializer.Serialize(current, Options));
     }
@@ -32,11 +35,11 @@ public static class ProjectFile
         using var document = JsonDocument.Parse(json);
         int version = ReadVersion(document.RootElement);
 
-        if (version is 3 or 4)
+        if (version is 3 or 4 or 5)
         {
             var data = JsonSerializer.Deserialize<ProjectData>(json, Options)
                        ?? throw new InvalidDataException($"올바르지 않은 프로젝트 파일입니다: {path}");
-            var current = NormalizeCurrent(data with { Version = 4 });
+            var current = NormalizeCurrent(data with { Version = 5 });
             ValidateCurrentVersion(current);
             return current;
         }
@@ -46,7 +49,7 @@ public static class ProjectFile
             var version2 = JsonSerializer.Deserialize<LegacyProjectDataV2>(json, Options)
                            ?? throw new InvalidDataException($"올바르지 않은 프로젝트 파일입니다: {path}");
             var migrated = NormalizeCurrent(new ProjectData(
-                Version: 4,
+                Version: 5,
                 CellSize: version2.CellSize,
                 MetersPerDrawingUnit: version2.MetersPerDrawingUnit,
                 Walls: version2.Walls ?? [],
@@ -86,7 +89,7 @@ public static class ProjectFile
             point.X * dxf.MetersPerDrawingUnit,
             point.Y * dxf.MetersPerDrawingUnit)).ToList();
         return new ProjectData(
-            Version: 4,
+            Version: 5,
             CellSize: legacy.CellSize,
             MetersPerDrawingUnit: dxf.MetersPerDrawingUnit,
             Walls: dxf.Walls.ToList(),
@@ -114,9 +117,9 @@ public static class ProjectFile
 
     private static void ValidateCurrentVersion(ProjectData data)
     {
-        if (data.Version != 4)
+        if (data.Version != 5)
         {
-            throw new InvalidDataException("저장할 프로젝트 버전은 4이어야 합니다.");
+            throw new InvalidDataException("저장할 프로젝트 버전은 5이어야 합니다.");
         }
         if (!double.IsFinite(data.CellSize) || data.CellSize <= 0)
         {
