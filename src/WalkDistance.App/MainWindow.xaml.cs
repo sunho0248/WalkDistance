@@ -47,8 +47,8 @@ public partial class MainWindow : Window
     private ViewTransform? _transform;
     private WorldPoint? _queryPoint;
     private double? _queryDistance;
-    private IReadOnlyList<WorldPoint>? _farthestPathPoints;
-    private IReadOnlyList<WorldPoint>? _queryPathPoints;
+    private WalkingPath? _farthestPath;
+    private WalkingPath? _queryPath;
     private IReadOnlyList<WorldPoint>? _previewRoute;
     private double? _threshold;
     private IReadOnlyList<DistanceContour> _normalContours = [];
@@ -159,7 +159,8 @@ public partial class MainWindow : Window
                                _bodyGrid.CellSize == cellSize.Value && _bodyProfile == profile &&
                                _bodyGrid.ClearanceRadius == clearanceRadius
                 ? DistanceMapCache.Create(_bodyGrid, _bodyResult, _queryPoint, _queryDistance,
-                    _farthestPathPoints, _queryPathPoints, _applyBodyMeasurements ? profile : null)
+                    _farthestPath?.Points, _queryPath?.Points, _applyBodyMeasurements ? profile : null,
+                    _farthestPath?.Start, _farthestPath?.Arrival, _queryPath?.Start, _queryPath?.Arrival)
                 : null;
             ProjectFile.Save(path, new ProjectData(
                 Version: 8,
@@ -241,8 +242,8 @@ public partial class MainWindow : Window
                             _bodyResult = restored.Result;
                             _queryPoint = restored.QueryPoint;
                             _queryDistance = restored.QueryDistance;
-                            _farthestPathPoints = restored.FarthestPath;
-                            _queryPathPoints = restored.QueryPath;
+                            _farthestPath = restored.FarthestPath;
+                            _queryPath = restored.QueryPath;
                         }
                     }
                 }
@@ -440,7 +441,7 @@ public partial class MainWindow : Window
         if (!_bodyGrid.Contains(worldPoint))
         {
             _queryDistance = null;
-            _queryPathPoints = null;
+            _queryPath = null;
             StatusText.Text = "선택 지점은 건물 외부입니다.";
             Redraw();
             return;
@@ -449,7 +450,7 @@ public partial class MainWindow : Window
         if (!_bodyGrid.IsWalkable(queryCell))
         {
             _queryDistance = null;
-            _queryPathPoints = null;
+            _queryPath = null;
             StatusText.Text = _bodyGrid.IsBlocked(queryCell.Col, queryCell.Row)
                 ? "선택 지점은 벽 위입니다."
                 : "선택 지점은 건물 외부입니다.";
@@ -457,7 +458,7 @@ public partial class MainWindow : Window
             return;
         }
         var queryPath = DistanceMapCalculator.FindPath(_bodyGrid, _bodyResult, worldPoint);
-        _queryPathPoints = queryPath?.Points;
+        _queryPath = queryPath;
         _queryDistance = queryPath?.Distance;
         StatusText.Text = _queryDistance is { } distance
             ? $"선택 지점 → 가장 가까운 출구: {distance:F2} m"
@@ -520,14 +521,14 @@ public partial class MainWindow : Window
         }
 
         bool exitedAddMode = _addExitMode;
-        bool clearedQuery = _queryPoint is not null || _queryDistance is not null || _queryPathPoints is not null;
+        bool clearedQuery = _queryPoint is not null || _queryDistance is not null || _queryPath is not null;
         if (exitedAddMode)
         {
             AddExitToggle.IsChecked = false;
         }
         _queryPoint = null;
         _queryDistance = null;
-        _queryPathPoints = null;
+        _queryPath = null;
         _exitEditor.ClearSelection();
         if (clearedQuery)
         {
@@ -944,10 +945,10 @@ public partial class MainWindow : Window
             _mapResult = null;
             _bodyResult = null;
             ClearMapCaches();
-            _farthestPathPoints = null;
+            _farthestPath = null;
             _queryPoint = null;
             _queryDistance = null;
-            _queryPathPoints = null;
+            _queryPath = null;
             if (_mapGrid.InteriorCellCount == 0)
             {
                 InvalidateAnalysis();
@@ -1006,24 +1007,24 @@ public partial class MainWindow : Window
                     : [];
                 var heatmapBitmap = HeatmapRenderer.Render(
                     mapGrid, results.Map.Distances, results.Map.MaxDistance, threshold);
-                var farthestPathPoints = results.Body.FarthestCell is { } farthest
+                var farthestPath = results.Body.FarthestCell is { } farthest
                     ? DistanceMapCalculator.FindPath(
                         bodyGrid,
                         results.Body,
-                        bodyGrid.CellCenter(farthest.Col, farthest.Row))?.Points
+                        bodyGrid.CellCenter(farthest.Col, farthest.Row))
                     : null;
                 return (normalContours, normalContourComponents, thresholdContours,
-                    heatmapBitmap, farthestPathPoints);
+                    heatmapBitmap, farthestPath);
             });
             _normalContours = artifacts.normalContours;
             _normalContourComponents = artifacts.normalContourComponents;
             _thresholdContours = artifacts.thresholdContours;
             _heatmapBitmap = artifacts.heatmapBitmap;
-            _farthestPathPoints = artifacts.farthestPathPoints;
+            _farthestPath = artifacts.farthestPath;
             AddExitToggle.IsChecked = false;
             _queryPoint = null;
             _queryDistance = null;
-            _queryPathPoints = null;
+            _queryPath = null;
             StatusText.Text = _bodyResult.FarthestCell is null
                 ? "도달 가능한 보행 영역이 없습니다."
                 : $"최대 보행거리: {_bodyResult.MaxDistance:F2} m · 계산 후 도면을 클릭하면 해당 최단경로를 표시합니다.";
@@ -1089,8 +1090,8 @@ public partial class MainWindow : Window
         _bodyResult = null;
         _queryPoint = null;
         _queryDistance = null;
-        _farthestPathPoints = null;
-        _queryPathPoints = null;
+        _farthestPath = null;
+        _queryPath = null;
         if (markDirty && _walls.Count > 0) SetDirty(true);
     }
 
@@ -1277,20 +1278,17 @@ public partial class MainWindow : Window
 
         if (showPaths)
         {
-            AddPath(_farthestPathPoints, Brushes.OrangeRed, 2.5);
-            AddPath(_queryPathPoints, Brushes.DeepSkyBlue, 2.5);
-            var farthestLabelPosition = AddPathLabel(_farthestPathPoints, _bodyResult?.MaxDistance, Brushes.OrangeRed);
-            AddPathLabel(_queryPathPoints, _queryDistance, Brushes.DeepSkyBlue, farthestLabelPosition);
+            AddPath(_farthestPath?.Points, Brushes.OrangeRed, 2.5);
+            AddPath(_queryPath?.Points, Brushes.DeepSkyBlue, 2.5);
+            var farthestLabelPosition = AddPathLabel(_farthestPath?.Points, _bodyResult?.MaxDistance, Brushes.OrangeRed);
+            AddPathLabel(_queryPath?.Points, _queryDistance, Brushes.DeepSkyBlue, farthestLabelPosition);
 
-            if (_bodyGrid is not null && _bodyResult?.FarthestCell is { } farthest)
+            if (_farthestPath is { } farthestPath && _bodyResult is { } bodyResult)
             {
-                AddBodyClearanceOutline(_bodyGrid.CellCenter(farthest.Col, farthest.Row), Brushes.OrangeRed,
-                    $"최대 보행거리 지점 ({_bodyResult.MaxDistance:F2} m)");
-                if (_farthestPathPoints is { Count: > 0 } farthestPath)
-                {
-                    AddBodyClearanceOutline(farthestPath[^1], Brushes.OrangeRed,
-                        "최대 보행거리 도착 중심", isArrival: true);
-                }
+                AddBodyClearanceOutline(farthestPath.Start, Brushes.OrangeRed,
+                    $"최대 보행거리 지점 ({bodyResult.MaxDistance:F2} m)");
+                AddBodyClearanceOutline(farthestPath.Arrival, Brushes.OrangeRed,
+                    "최대 보행거리 도착 중심", isArrival: true);
             }
 
             if (_queryPoint is { } queryPoint)
@@ -1298,13 +1296,13 @@ public partial class MainWindow : Window
                 string tooltip = _queryDistance is { } distance
                     ? $"선택 지점 ({distance:F2} m)"
                     : "도달 불가능 또는 벽";
-                AddBodyClearanceOutline(queryPoint,
-                    _queryDistance is null ? Brushes.Gray : Brushes.DeepSkyBlue, tooltip);
-                if (_queryPathPoints is { Count: > 0 } queryPath)
+                if (_queryPath is { } queryPath)
                 {
-                    AddBodyClearanceOutline(queryPath[^1], Brushes.DeepSkyBlue,
+                    AddBodyClearanceOutline(queryPath.Start, Brushes.DeepSkyBlue, tooltip);
+                    AddBodyClearanceOutline(queryPath.Arrival, Brushes.DeepSkyBlue,
                         "선택 지점 경로 도착 중심", isArrival: true);
                 }
+                else AddBodyClearanceOutline(queryPoint, Brushes.Gray, tooltip);
             }
         }
     }

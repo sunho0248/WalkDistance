@@ -18,7 +18,11 @@ public sealed record DistanceMapCache(
     double? QueryDistance = null,
     List<WorldPoint>? FarthestPath = null,
     List<WorldPoint>? QueryPath = null,
-    BodyProfile? BodyProfile = null)
+    BodyProfile? BodyProfile = null,
+    WorldPoint? FarthestPathStart = null,
+    WorldPoint? FarthestPathArrival = null,
+    WorldPoint? QueryPathStart = null,
+    WorldPoint? QueryPathArrival = null)
 {
     public static DistanceMapCache Create(
         WalkabilityGrid grid,
@@ -27,7 +31,11 @@ public sealed record DistanceMapCache(
         double? queryDistance,
         IReadOnlyList<WorldPoint>? farthestPath,
         IReadOnlyList<WorldPoint>? queryPath,
-        BodyProfile? bodyProfile = null) => new(
+        BodyProfile? bodyProfile = null,
+        WorldPoint? farthestPathStart = null,
+        WorldPoint? farthestPathArrival = null,
+        WorldPoint? queryPathStart = null,
+        WorldPoint? queryPathArrival = null) => new(
             grid.Rows,
             grid.Cols,
             Flatten(result.Distances),
@@ -43,7 +51,11 @@ public sealed record DistanceMapCache(
             queryDistance,
             farthestPath?.ToList(),
             queryPath?.ToList(),
-            bodyProfile);
+            bodyProfile,
+            farthestPathStart,
+            farthestPathArrival,
+            queryPathStart,
+            queryPathArrival);
 
     public bool IsCompatibleWith(WalkabilityGrid grid) =>
         BodyProfile is null && grid.ClearanceRadius == 0 && HasExpectedDimensions(grid);
@@ -94,7 +106,9 @@ public sealed record DistanceMapCache(
             SourceGroups = SourceGroups.Select(group => (IReadOnlyList<DistanceSource>)group).ToList(),
             WinningGroupIndexes = WinningGroupIndexes.Length == 0 ? null : Expand(WinningGroupIndexes),
         };
-        return new CachedAnalysis(result, QueryPoint, QueryDistance, FarthestPath, QueryPath);
+        return new CachedAnalysis(result, QueryPoint, QueryDistance,
+            DistanceMapCalculator.RestorePath(FarthestPath, FarthestPathStart, FarthestPathArrival),
+            DistanceMapCalculator.RestorePath(QueryPath, QueryPathStart, QueryPathArrival));
     }
 
     private static T[] Flatten<T>(T[,] values)
@@ -131,5 +145,5 @@ public sealed record CachedAnalysis(
     DistanceMapResult Result,
     WorldPoint? QueryPoint,
     double? QueryDistance,
-    IReadOnlyList<WorldPoint>? FarthestPath,
-    IReadOnlyList<WorldPoint>? QueryPath);
+    WalkingPath? FarthestPath,
+    WalkingPath? QueryPath);
