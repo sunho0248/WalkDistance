@@ -41,7 +41,7 @@ public static class ProjectFile
         {
             var data = JsonSerializer.Deserialize<ProjectData>(json, Options)
                        ?? throw new InvalidDataException($"올바르지 않은 프로젝트 파일입니다: {path}");
-            var current = NormalizeCurrent(data with { Version = 7 });
+            var current = NormalizeCurrent(data with { Version = 7, Analysis = version == 6 ? null : data.Analysis });
             ValidateCurrentVersion(current);
             return current;
         }

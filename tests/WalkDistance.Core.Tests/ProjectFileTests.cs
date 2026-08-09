@@ -33,18 +33,32 @@ public sealed class ProjectFileTests : IDisposable
     }
 
     [Fact]
-    public void Version6_DropsBodyFilteredCacheInsteadOfUsingItAsTheMap()
+    public void Version6_DropsProfilelessBodyFilteredCacheInsteadOfUsingItAsTheMap()
     {
         var profile = new BodyProfile(0.5, 1.1);
         var walls = Rectangle(0, 0, 10, 10);
         var grid = WalkabilityGrid.Build(walls, 1, marginCells: 0, clearanceRadius: profile.ClearanceRadius);
         var source = grid.NearestWalkableCell(new WorldPoint(5, 5))!.Value;
         var result = DistanceMapCalculator.Compute(grid, [source]);
-        var cache = DistanceMapCache.Create(grid, result, null, null, null, null, profile);
+        var cache = DistanceMapCache.Create(grid, result, null, null, null, null);
         var path = Path.Combine(_directory, "profile.walkdistance");
 
-        File.WriteAllText(path, JsonSerializer.Serialize(new ProjectData(
-            6, 1, 1, walls, [], Analysis: cache, BodyProfile: profile), new JsonSerializerOptions
+        File.WriteAllText(path, JsonSerializer.Serialize(new
+        {
+            Version = 6,
+            CellSize = 1.0,
+            MetersPerDrawingUnit = 1.0,
+            Walls = walls,
+            Exits = Array.Empty<Segment>(),
+            BodyProfile = profile,
+            Analysis = new
+            {
+                cache.Rows, cache.Cols, cache.Distances, cache.Predecessors, cache.FarthestCell,
+                cache.MaxDistance, cache.UnreachableCellCount, cache.Roots, cache.SourceGroups,
+                cache.WinningGroupIndexes, cache.QueryPoint, cache.QueryDistance, cache.FarthestPath,
+                cache.QueryPath,
+            },
+        }, new JsonSerializerOptions
         {
             NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
         }));
