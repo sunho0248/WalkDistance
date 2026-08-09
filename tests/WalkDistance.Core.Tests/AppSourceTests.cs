@@ -33,10 +33,13 @@ public class AppSourceTests
         Assert.Contains("ZoomWindowToggle.IsChecked == true", down);
         Assert.Contains("e.ChangedButton == MouseButton.Left", down);
         Assert.Contains("_zoomWindowEnd = e.GetPosition(DrawingCanvas)", move);
+        Assert.Contains("_zoomWindowCursor = e.GetPosition(DrawingCanvas)", move);
         Assert.Contains("ZoomToRectangle", up);
         Assert.Contains("_isFitMode = false", up);
+        Assert.Contains("ZoomWindowToggle.IsChecked = false", up);
         Assert.Contains("ZoomWindowToggle.IsChecked = false", keyDown);
         Assert.Contains("DrawZoomWindow", ReadAppMethod("MainWindow.xaml.cs", "private void Redraw"));
+        Assert.Contains("DrawZoomWindowCrosshair", ReadAppMethod("MainWindow.xaml.cs", "private void Redraw"));
     }
 
     [Fact]

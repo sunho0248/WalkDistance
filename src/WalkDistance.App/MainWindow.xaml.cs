@@ -38,6 +38,7 @@ public partial class MainWindow : Window
     private bool _isZoomWindowDragging;
     private Point _zoomWindowStart;
     private Point _zoomWindowEnd;
+    private Point? _zoomWindowCursor;
     private bool _isFitMode = true;
     private ViewTransform? _transform;
     private WorldPoint? _queryPoint;
@@ -297,6 +298,7 @@ public partial class MainWindow : Window
     private void OnZoomWindowModeChanged(object sender, RoutedEventArgs e)
     {
         _isZoomWindowDragging = false;
+        _zoomWindowCursor = null;
         DrawingCanvas.ReleaseMouseCapture();
         DrawingCanvas.Cursor = ZoomWindowToggle.IsChecked == true || _addExitMode ? Cursors.Cross : Cursors.Arrow;
         Redraw();
@@ -515,6 +517,16 @@ public partial class MainWindow : Window
 
     private void OnCanvasMouseMove(object sender, MouseEventArgs e)
     {
+        if (ZoomWindowToggle.IsChecked == true)
+        {
+            _zoomWindowCursor = e.GetPosition(DrawingCanvas);
+            if (!_isZoomWindowDragging)
+            {
+                Redraw();
+                return;
+            }
+        }
+
         if (_isZoomWindowDragging)
         {
             _zoomWindowEnd = e.GetPosition(DrawingCanvas);
@@ -613,6 +625,7 @@ public partial class MainWindow : Window
                 _transform = _transform.ZoomToRectangle(selection, DrawingCanvas.ActualWidth, DrawingCanvas.ActualHeight);
                 _isFitMode = false;
             }
+            ZoomWindowToggle.IsChecked = false;
             Redraw();
             return;
         }
@@ -1116,6 +1129,11 @@ public partial class MainWindow : Window
             AddMarker(_transform.ToScreen(previewRoute[^1]), 4, Brushes.Red, "출구 미리보기 끝점");
         }
 
+        if (ZoomWindowToggle.IsChecked == true && _zoomWindowCursor is { } zoomCursor)
+        {
+            DrawZoomWindowCrosshair(zoomCursor);
+        }
+
         if (_isZoomWindowDragging)
         {
             DrawZoomWindow();
@@ -1306,6 +1324,20 @@ public partial class MainWindow : Window
         Canvas.SetLeft(rectangle, selection.Left);
         Canvas.SetTop(rectangle, selection.Top);
         DrawingCanvas.Children.Add(rectangle);
+    }
+
+    private void DrawZoomWindowCrosshair(Point cursor)
+    {
+        DrawingCanvas.Children.Add(new Line
+        {
+            X1 = 0, Y1 = cursor.Y, X2 = DrawingCanvas.ActualWidth, Y2 = cursor.Y,
+            Stroke = Brushes.DodgerBlue, StrokeThickness = 1, StrokeDashArray = [4, 3], IsHitTestVisible = false,
+        });
+        DrawingCanvas.Children.Add(new Line
+        {
+            X1 = cursor.X, Y1 = 0, X2 = cursor.X, Y2 = DrawingCanvas.ActualHeight,
+            Stroke = Brushes.DodgerBlue, StrokeThickness = 1, StrokeDashArray = [4, 3], IsHitTestVisible = false,
+        });
     }
 
     private void AddPath(IReadOnlyList<WorldPoint>? points, Brush brush, double thickness)
