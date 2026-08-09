@@ -299,7 +299,8 @@ public partial class MainWindow : Window
     private void UpdateTitle()
     {
         string name = _projectPath is not null ? System.IO.Path.GetFileName(_projectPath) : "Untitled";
-        Title = $"{name}{(_isDirty ? "*" : "")} - 보행거리 계산";
+        string version = typeof(App).Assembly.GetName().Version?.ToString(3) ?? "unknown";
+        Title = $"{name}{(_isDirty ? "*" : "")} - 보행거리 계산 v{version}";
     }
 
     private void OnAddExitModeChanged(object sender, RoutedEventArgs e)

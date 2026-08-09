@@ -152,6 +152,8 @@ public class AppSourceTests
         Assert.Contains("private bool _isDirty", source);
         Assert.Contains("System.IO.Path.GetFileName(_projectPath) : \"Untitled\"", source);
         Assert.Contains("_isDirty ? \"*\" : \"\"", source);
+        Assert.Contains("typeof(App).Assembly.GetName().Version?.ToString(3)", source);
+        Assert.Contains("보행거리 계산 v{version}", source);
         Assert.Contains("private void SetDirty(bool dirty)", source);
     }
 
