@@ -2,7 +2,7 @@
 
 건축 DXF 도면의 벽을 보행 가능 격자로 변환하고, 각 지점에서 가장 가까운 출구까지의 보행거리를 보여 주는 Windows 데스크톱 프로그램입니다.
 
-- GitHub Release: https://github.com/sunho0248/WalkDistance/releases/tag/v1.3.0
+- GitHub Release: https://github.com/sunho0248/WalkDistance/releases/tag/v1.3.1
 - 지원 환경: Windows 10/11 x64
 
 
@@ -10,12 +10,18 @@
 
 ## 바로 실행하기
 
-가장 쉬운 방법은 [v1.3.0 Release](https://github.com/sunho0248/WalkDistance/releases/tag/v1.3.0)에서 `WalkDistance-win-x64.zip`를 내려받는 것입니다.
+가장 쉬운 방법은 [v1.3.1 Release](https://github.com/sunho0248/WalkDistance/releases/tag/v1.3.1)에서 `WalkDistance-win-x64.zip`를 내려받는 것입니다.
 
 1. ZIP 파일의 압축을 풉니다.
 2. `WalkDistance.exe`를 실행합니다.
 
 이 배포 파일은 **자체 포함(Self-contained)** 패키지이므로 .NET Desktop Runtime을 별도로 설치할 필요가 없습니다. ZIP에는 실행에 필요한 모든 파일이 포함되어 있습니다.
+
+## 업데이트
+
+시작할 때 한 세션에 한 번만 공개 GitHub Release를 확인합니다. 새 버전이 있으면 설치 여부를 묻고, **예**를 선택한 경우에만 `WalkDistance-win-x64.zip`를 내려받습니다. 다운로드한 파일은 GitHub Release API의 SHA-256 digest와 일치할 때만 설치하며, 네트워크 오류는 작업을 방해하지 않도록 알림 없이 건너뜁니다.
+
+업데이트 도우미와 자체 포함 런타임 파일은 ZIP 루트에 포함됩니다. 설치 중에는 앱이 종료된 뒤 도우미가 안전한 임시 폴더에 압축을 풀고 기존 파일을 백업한 뒤 교체합니다. 새 앱을 시작하지 못하면 백업을 복원합니다. `.walkdistance` 프로젝트는 설치 폴더 밖에 저장하면 업데이트의 영향을 받지 않습니다.
 
 ## 주요 기능
 
@@ -88,11 +94,16 @@ dotnet run --project src/WalkDistance.App/WalkDistance.App.csproj
 dotnet test WalkDistance.sln -c Release --no-restore
 dotnet build src/WalkDistance.App/WalkDistance.App.csproj -c Release -r win-x64 --no-restore
 dotnet publish src/WalkDistance.App/WalkDistance.App.csproj -c Release -r win-x64 --self-contained true --no-restore -o dist/win-x64
+Compress-Archive -Path dist\win-x64\* -DestinationPath dist\WalkDistance-win-x64.zip -Force
 ```
+
+Release에는 `dist\WalkDistance-win-x64.zip`를 `WalkDistance-win-x64.zip` 이름으로 올립니다. publish 검증은 ZIP에 들어갈 루트에 `WalkDistance.Updater.exe`와 도우미 런타임 파일이 없으면 실패합니다.
 
 ## 프로젝트 구조
 
 - `src/WalkDistance.Core`: DXF, geometry, 격자, 경로 탐색, 프로젝트 파일
 - `src/WalkDistance.App`: 한국어 WPF UI와 거리 맵 렌더링
+- `src/WalkDistance.Update`: GitHub Release, SHA-256, 안전한 ZIP 처리
+- `src/WalkDistance.Updater`: 종료된 앱 파일을 교체하는 별도 업데이트 도우미
 - `tests/WalkDistance.Core.Tests`: 자동 테스트
 - `samples`: 수동 확인용 DXF

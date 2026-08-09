@@ -2,6 +2,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\WalkDistance.Core\WalkDistance.Core.csproj" />
+    <ProjectReference Include="..\WalkDistance.Update\WalkDistance.Update.csproj" />
+    <ProjectReference Include="..\WalkDistance.Updater\WalkDistance.Updater.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -12,6 +14,34 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>WalkDistance</AssemblyName>
     <ApplicationIcon>Assets\WalkDistance.ico</ApplicationIcon>
+    <Version>1.3.1</Version>
+    <AssemblyVersion>1.3.1.0</AssemblyVersion>
+    <FileVersion>1.3.1.0</FileVersion>
   </PropertyGroup>
+
+  <Target Name="RemoveLegacyUpdaterPublishDirectory" BeforeTargets="Publish">
+    <RemoveDir Directories="$(PublishDir)Updater" Condition="Exists('$(PublishDir)Updater')" />
+  </Target>
+
+  <Target Name="PublishUpdater" AfterTargets="Publish">
+    <MSBuild Projects="..\WalkDistance.Updater\WalkDistance.Updater.csproj"
+             Targets="Publish"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishSingleFile=false;PublishDir=$(PublishDir)" />
+  </Target>
+
+  <Target Name="VerifyUpdaterPublishLayout" AfterTargets="Publish" DependsOnTargets="PublishUpdater">
+    <Error Condition="Exists('$(PublishDir)Updater')"
+           Text="Publish output must not retain the obsolete Updater directory." />
+    <Error Condition="!Exists('$(PublishDir)WalkDistance.Updater.exe')"
+           Text="Publish output must contain WalkDistance.Updater.exe at its root." />
+    <Error Condition="!Exists('$(PublishDir)WalkDistance.Updater.dll')"
+           Text="Publish output must contain WalkDistance.Updater.dll at its root." />
+    <Error Condition="!Exists('$(PublishDir)WalkDistance.Updater.deps.json')"
+           Text="Publish output must contain WalkDistance.Updater.deps.json at its root." />
+    <Error Condition="!Exists('$(PublishDir)WalkDistance.Updater.runtimeconfig.json')"
+           Text="Publish output must contain WalkDistance.Updater.runtimeconfig.json at its root." />
+    <Error Condition="'$(SelfContained)' == 'true' And !Exists('$(PublishDir)hostfxr.dll')"
+           Text="Self-contained publish output must contain its runtime files at the root." />
+  </Target>
 
 </Project>

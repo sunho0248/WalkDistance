@@ -25,6 +25,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\WalkDistance.Core\WalkDistance.Core.csproj" />
     <ProjectReference Include="..\..\src\WalkDistance.App\WalkDistance.App.csproj" />
+    <ProjectReference Include="..\..\src\WalkDistance.Update\WalkDistance.Update.csproj" />
   </ItemGroup>
 
 </Project>
