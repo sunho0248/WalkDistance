@@ -17,7 +17,8 @@ public sealed record DistanceMapCache(
     WorldPoint? QueryPoint = null,
     double? QueryDistance = null,
     List<WorldPoint>? FarthestPath = null,
-    List<WorldPoint>? QueryPath = null)
+    List<WorldPoint>? QueryPath = null,
+    BodyProfile? BodyProfile = null)
 {
     public static DistanceMapCache Create(
         WalkabilityGrid grid,
@@ -25,7 +26,8 @@ public sealed record DistanceMapCache(
         WorldPoint? queryPoint,
         double? queryDistance,
         IReadOnlyList<WorldPoint>? farthestPath,
-        IReadOnlyList<WorldPoint>? queryPath) => new(
+        IReadOnlyList<WorldPoint>? queryPath,
+        BodyProfile? bodyProfile = null) => new(
             grid.Rows,
             grid.Cols,
             Flatten(result.Distances),
@@ -40,7 +42,38 @@ public sealed record DistanceMapCache(
             queryPoint,
             queryDistance,
             farthestPath?.ToList(),
-            queryPath?.ToList());
+            queryPath?.ToList(),
+            bodyProfile);
+
+    public bool IsCompatibleWith(WalkabilityGrid grid) =>
+        BodyProfile is null && grid.ClearanceRadius == 0 && HasExpectedDimensions(grid);
+
+    public bool IsCompatibleWith(WalkabilityGrid grid, BodyProfile bodyProfile) =>
+        BodyProfile == bodyProfile && bodyProfile.IsValid &&
+        grid.ClearanceRadius == bodyProfile.ClearanceRadius && HasExpectedDimensions(grid);
+
+    public bool IsSane
+    {
+        get
+        {
+            if (Rows <= 0 || Cols <= 0 || Distances is null || Predecessors is null ||
+                Roots is null || SourceGroups is null || WinningGroupIndexes is null)
+            {
+                return false;
+            }
+
+            try
+            {
+                int count = checked(Rows * Cols);
+                return Distances.Length == count && Predecessors.Length == count &&
+                       (WinningGroupIndexes.Length == 0 || WinningGroupIndexes.Length == count);
+            }
+            catch (OverflowException)
+            {
+                return false;
+            }
+        }
+    }
 
     public CachedAnalysis Restore(WalkabilityGrid grid)
     {
@@ -89,6 +122,9 @@ public sealed record DistanceMapCache(
             result[i / Cols, i % Cols] = values[i] is { } cell ? (cell.Col, cell.Row) : null;
         return result;
     }
+
+    private bool HasExpectedDimensions(WalkabilityGrid grid) =>
+        IsSane && grid.Rows == Rows && grid.Cols == Cols;
 }
 
 public sealed record CachedAnalysis(

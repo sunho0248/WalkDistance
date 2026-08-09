@@ -1,26 +1,12 @@
 namespace WalkDistance.Core;
 
-public sealed class GridSizeLimitExceededException : InvalidOperationException
-{
-    public long RequestedCellCount { get; }
-    public int MaxCellCount { get; }
-
-    public GridSizeLimitExceededException(long requestedCellCount, int maxCellCount)
-        : base($"격자 셀 {requestedCellCount:N0}개가 허용 한도 {maxCellCount:N0}개를 초과합니다.")
-    {
-        RequestedCellCount = requestedCellCount;
-        MaxCellCount = maxCellCount;
-    }
-}
-
 /// <summary>
 /// Rasterized floor plan: each cell is either walkable (free) or blocked (wall).
 /// </summary>
 public sealed class WalkabilityGrid
 {
-    public const int DefaultMaxCellCount = 10_000_000;
-
     public double CellSize { get; }
+    public double ClearanceRadius { get; }
     public Bounds Bounds { get; }
     public int Cols { get; }
     public int Rows { get; }
@@ -34,7 +20,8 @@ public sealed class WalkabilityGrid
         int cols,
         int rows,
         bool[,] blocked,
-        Segment[] walls)
+        Segment[] walls,
+        double clearanceRadius)
     {
         CellSize = cellSize;
         Bounds = bounds;
@@ -43,6 +30,7 @@ public sealed class WalkabilityGrid
         _blocked = blocked;
         _exterior = new bool[rows, cols];
         _walls = walls;
+        ClearanceRadius = clearanceRadius;
     }
 
     public bool IsBlocked(int col, int row) => _blocked[row, col];
@@ -97,7 +85,7 @@ public sealed class WalkabilityGrid
         {
             return false;
         }
-        if (!HasLineOfSight(start, contact, allowBlockedEndCell: true))
+        if (!HasLineOfSight(start, contact, allowBlockedEndCell: true, exit))
         {
             return false;
         }
@@ -113,7 +101,11 @@ public sealed class WalkabilityGrid
         return true;
     }
 
-    private bool HasLineOfSight(WorldPoint start, WorldPoint end, bool allowBlockedEndCell)
+    private bool HasLineOfSight(
+        WorldPoint start,
+        WorldPoint end,
+        bool allowBlockedEndCell,
+        Segment? exit = null)
     {
         if (!IsFinite(start) || !IsFinite(end) ||
             start.X < Bounds.MinX || start.X > Bounds.MaxX ||
@@ -159,19 +151,26 @@ public sealed class WalkabilityGrid
             bool isAllowedEnd = allowBlockedEndCell && InBounds(candidateCol, candidateRow) &&
                                 candidateCol == endCol && candidateRow == endRow &&
                                 (IsBlocked(candidateCol, candidateRow) || IsWalkable(candidateCol, candidateRow));
-            if (!InBounds(candidateCol, candidateRow) || (!isAllowedEnd && !IsWalkable(candidateCol, candidateRow)))
+            bool IsExitClearance(int col, int row) =>
+                exit is { } allowedExit && InBounds(col, row) && !_exterior[row, col] &&
+                IsWithinExitClearance(CellCenter(col, row), allowedExit);
+
+            if (!InBounds(candidateCol, candidateRow) ||
+                (!isAllowedEnd && !IsWalkable(candidateCol, candidateRow) && !IsExitClearance(candidateCol, candidateRow)))
             {
                 return false;
             }
             if (horizontalBoundary &&
                 (!InBounds(candidateCol, candidateRow - 1) ||
-                 (!isAllowedEnd && !IsWalkable(candidateCol, candidateRow - 1))))
+                 (!isAllowedEnd && !IsWalkable(candidateCol, candidateRow - 1) &&
+                  !IsExitClearance(candidateCol, candidateRow - 1))))
             {
                 return false;
             }
             if (verticalBoundary &&
                 (!InBounds(candidateCol - 1, candidateRow) ||
-                 (!isAllowedEnd && !IsWalkable(candidateCol - 1, candidateRow))))
+                 (!isAllowedEnd && !IsWalkable(candidateCol - 1, candidateRow) &&
+                  !IsExitClearance(candidateCol - 1, candidateRow))))
             {
                 return false;
             }
@@ -318,7 +317,14 @@ public sealed class WalkabilityGrid
         double proximity,
         int? exitGroupId = null)
     {
-        var candidates = WalkableCellsNearSegment(segment, proximity);
+        bool legacyPointExit = segment.Start == segment.End;
+        if (ClearanceRadius > 0 && !legacyPointExit &&
+            Math.Sqrt(SquaredDistance(segment.Start, segment.End)) < 2 * ClearanceRadius)
+        {
+            return [];
+        }
+
+        var candidates = WalkableCellsNearSegment(segment, proximity + ClearanceRadius);
         var sources = new List<DistanceSource>(candidates.Count);
         double dx = segment.End.X - segment.Start.X;
         double dy = segment.End.Y - segment.Start.Y;
@@ -330,6 +336,9 @@ public sealed class WalkabilityGrid
             double projection = (center.X - segment.Start.X) * dx +
                                 (center.Y - segment.Start.Y) * dy;
             if ((lengthSquared == 0 || projection >= 0 && projection <= lengthSquared) &&
+                (ClearanceRadius == 0 || legacyPointExit ||
+                 Math.Sqrt(SquaredDistance(contact, segment.Start)) >= ClearanceRadius &&
+                 Math.Sqrt(SquaredDistance(contact, segment.End)) >= ClearanceRadius) &&
                 HasLineOfSightToExit(center, contact, segment))
             {
                 sources.Add(new DistanceSource(col, row, contact, segment, exitGroupId));
@@ -348,7 +357,7 @@ public sealed class WalkabilityGrid
         IReadOnlyList<Segment> walls,
         double cellSize,
         int marginCells = 2,
-        int maxCellCount = DefaultMaxCellCount)
+        double clearanceRadius = 0)
     {
         if (!double.IsFinite(cellSize) || cellSize <= 0)
         {
@@ -358,9 +367,9 @@ public sealed class WalkabilityGrid
         {
             throw new ArgumentOutOfRangeException(nameof(marginCells));
         }
-        if (maxCellCount <= 0)
+        if (!double.IsFinite(clearanceRadius) || clearanceRadius < 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(maxCellCount));
+            throw new ArgumentOutOfRangeException(nameof(clearanceRadius));
         }
 
         var wallSnapshot = walls.ToArray();
@@ -371,21 +380,8 @@ public sealed class WalkabilityGrid
             bounds.MaxX + marginCells * cellSize,
             bounds.MaxY + marginCells * cellSize);
 
-        double requestedCols = Math.Max(1, Math.Ceiling(padded.Width / cellSize) + 1);
-        double requestedRows = Math.Max(1, Math.Ceiling(padded.Height / cellSize) + 1);
-        if (!double.IsFinite(requestedCols) || !double.IsFinite(requestedRows) ||
-            requestedCols > int.MaxValue || requestedRows > int.MaxValue)
-        {
-            throw new GridSizeLimitExceededException(long.MaxValue, maxCellCount);
-        }
-
-        int cols = (int)requestedCols;
-        int rows = (int)requestedRows;
-        long requestedCellCount = (long)cols * rows;
-        if (requestedCellCount > maxCellCount)
-        {
-            throw new GridSizeLimitExceededException(requestedCellCount, maxCellCount);
-        }
+        int cols = checked((int)Math.Max(1, Math.Ceiling(padded.Width / cellSize) + 1));
+        int rows = checked((int)Math.Max(1, Math.Ceiling(padded.Height / cellSize) + 1));
 
         var blocked = new bool[rows, cols];
         var gridBounds = new Bounds(
@@ -393,7 +389,8 @@ public sealed class WalkabilityGrid
             padded.MinY,
             padded.MinX + cols * cellSize,
             padded.MinY + rows * cellSize);
-        var grid = new WalkabilityGrid(cellSize, gridBounds, cols, rows, blocked, wallSnapshot);
+        var grid = new WalkabilityGrid(
+            cellSize, gridBounds, cols, rows, blocked, wallSnapshot, clearanceRadius);
 
         foreach (var wall in wallSnapshot)
         {
@@ -452,6 +449,12 @@ public sealed class WalkabilityGrid
 
     private void RasterizeSegment(Segment wall)
     {
+        if (ClearanceRadius > 0)
+        {
+            RasterizeInflatedSegment(wall);
+            return;
+        }
+
         double length = Math.Sqrt(
             Math.Pow(wall.End.X - wall.Start.X, 2) + Math.Pow(wall.End.Y - wall.Start.Y, 2));
         int steps = Math.Max(1, (int)Math.Ceiling(length / (CellSize / 2)));
@@ -465,6 +468,40 @@ public sealed class WalkabilityGrid
             var (col, row) = WorldToCell(p);
             _blocked[row, col] = true;
         }
+    }
+
+    private void RasterizeInflatedSegment(Segment wall)
+    {
+        double reach = ClearanceRadius + (CellSize * Math.Sqrt(2) / 2);
+        double reachSquared = reach * reach;
+        int minCol = Math.Max(0, (int)Math.Floor(
+            (Math.Min(wall.Start.X, wall.End.X) - reach - Bounds.MinX) / CellSize));
+        int maxCol = Math.Min(Cols - 1, (int)Math.Floor(
+            (Math.Max(wall.Start.X, wall.End.X) + reach - Bounds.MinX) / CellSize));
+        int minRow = Math.Max(0, (int)Math.Floor(
+            (Math.Min(wall.Start.Y, wall.End.Y) - reach - Bounds.MinY) / CellSize));
+        int maxRow = Math.Min(Rows - 1, (int)Math.Floor(
+            (Math.Max(wall.Start.Y, wall.End.Y) + reach - Bounds.MinY) / CellSize));
+
+        for (int row = minRow; row <= maxRow; row++)
+        for (int col = minCol; col <= maxCol; col++)
+        {
+            if (SquaredDistance(CellCenter(col, row), ClosestPoint(wall, CellCenter(col, row))) <= reachSquared)
+            {
+                _blocked[row, col] = true;
+            }
+        }
+    }
+
+    private bool IsWithinExitClearance(WorldPoint point, Segment exit)
+    {
+        if (ClearanceRadius == 0)
+        {
+            return false;
+        }
+
+        double reach = ClearanceRadius + (CellSize * Math.Sqrt(2) / 2);
+        return SquaredDistance(point, ClosestPoint(exit, point)) <= reach * reach;
     }
 
     private static WorldPoint ClosestPoint(Segment segment, WorldPoint point)
