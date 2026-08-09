@@ -1,7 +1,11 @@
 namespace WalkDistance.Core;
 
 public readonly record struct GridCell(int Col, int Row);
-public sealed record CachedRoot(GridCell Cell, WorldPoint Contact, Segment? ExitSegment);
+public sealed record CachedRoot(
+    GridCell Cell,
+    WorldPoint Contact,
+    Segment? ExitSegment,
+    WorldPoint? Arrival = null);
 
 public sealed record DistanceMapCache(
     int Rows,
@@ -44,7 +48,8 @@ public sealed record DistanceMapCache(
             result.MaxDistance,
             result.UnreachableCellCount,
             result.Roots.Select(pair => new CachedRoot(
-                new GridCell(pair.Key.Col, pair.Key.Row), pair.Value.Contact, pair.Value.ExitSegment)).ToList(),
+                new GridCell(pair.Key.Col, pair.Key.Row), pair.Value.Contact, pair.Value.ExitSegment,
+                pair.Value.ContactIsExit ? null : pair.Value.Arrival)).ToList(),
             result.SourceGroups.Select(group => group.ToList()).ToList(),
             result.WinningGroupIndexes is { } winners ? Flatten(winners) : [],
             queryPoint,
@@ -62,7 +67,9 @@ public sealed record DistanceMapCache(
 
     public bool IsCompatibleWith(WalkabilityGrid grid, BodyProfile bodyProfile) =>
         BodyProfile == bodyProfile && bodyProfile.IsValid &&
-        grid.ClearanceRadius == bodyProfile.ClearanceRadius && HasExpectedDimensions(grid);
+        grid.ClearanceRadius == bodyProfile.ClearanceRadius &&
+        (grid.ClearanceRadius == 0 || SourceGroups.All(group => group.All(source => source.ArrivalPoint is not null))) &&
+        HasExpectedDimensions(grid);
 
     public bool IsSane
     {
@@ -102,7 +109,11 @@ public sealed record DistanceMapCache(
             Expand(Predecessors))
         {
             Roots = Roots.ToDictionary(root => (root.Cell.Col, root.Cell.Row),
-                root => new DistanceRoot(root.Contact, root.ExitSegment)),
+                root => new DistanceRoot(
+                    root.Contact,
+                    root.ExitSegment,
+                    root.Arrival ?? root.Contact,
+                    root.Arrival is null)),
             SourceGroups = SourceGroups.Select(group => (IReadOnlyList<DistanceSource>)group).ToList(),
             WinningGroupIndexes = WinningGroupIndexes.Length == 0 ? null : Expand(WinningGroupIndexes),
         };

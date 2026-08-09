@@ -164,6 +164,7 @@ public class DistanceMapCalculatorTests
         Assert.All(sources, source => Assert.True(grid.HasLineOfSight(
             grid.CellCenter(source.Col, source.Row),
             source.ExitPoint)));
+        Assert.All(sources, source => Assert.Null(source.ArrivalPoint));
         var result = DistanceMapCalculator.Compute(grid, sources);
 
         var path = DistanceMapCalculator.GetPath(grid, result, new WorldPoint(8.2, 5.3))!;
@@ -175,7 +176,7 @@ public class DistanceMapCalculatorTests
     }
 
     [Fact]
-    public void GetPath_BodyRouteEndsAtWalkableCenterClearOfTheExit()
+    public void GetPath_BodyRouteEndsTangentToTheExit()
     {
         const double clearanceRadius = 0.2;
         var grid = WalkabilityGrid.Build(Rectangle(0, 0, 10, 10), cellSize: 0.05, marginCells: 0,
@@ -187,8 +188,10 @@ public class DistanceMapCalculatorTests
         Assert.All(sources, source =>
         {
             Assert.Equal(grid.CellCenter(source.Col, source.Row), source.ExitPoint);
-            Assert.Null(source.ExitSegment);
-            Assert.True(source.ExitPoint.Y >= clearanceRadius);
+            Assert.Equal(exit, source.ExitSegment);
+            Assert.True(source.ArrivalPoint is { } arrival);
+            Assert.Equal(clearanceRadius, DistanceToSegment(source.ArrivalPoint!.Value, exit), precision: 10);
+            Assert.InRange(source.ArrivalPoint!.Value.X, exit.Start.X, exit.End.X);
         });
 
         var query = new WorldPoint(5, 5);
@@ -197,15 +200,41 @@ public class DistanceMapCalculatorTests
         var path = walkingPath.Points;
 
         Assert.Equal(query, walkingPath.Start);
-        Assert.True(walkingPath.Arrival.Y >= clearanceRadius);
-        Assert.True(grid.IsWalkable(grid.WorldToCell(walkingPath.Arrival)));
-        Assert.True(grid.HasLineOfSight(path[^2], walkingPath.Arrival));
+        Assert.Equal(clearanceRadius, DistanceToSegment(walkingPath.Arrival, exit), precision: 10);
+        Assert.InRange(walkingPath.Arrival.X, exit.Start.X, exit.End.X);
+        Assert.Equal(walkingPath.Arrival, path[^1]);
+        Assert.Equal(walkingPath.Distance,
+            DistanceMapCalculator.GetDistanceAt(grid, result, query)!.Value, precision: 10);
 
         var farthest = result.FarthestCell!.Value;
         var farthestPath = DistanceMapCalculator.FindPath(
             grid, result, grid.CellCenter(farthest.Col, farthest.Row))!;
         Assert.Equal(grid.CellCenter(farthest.Col, farthest.Row), farthestPath.Start);
-        Assert.True(farthestPath.Arrival.Y >= clearanceRadius);
+        Assert.Equal(clearanceRadius, DistanceToSegment(farthestPath.Arrival, exit), precision: 10);
+    }
+
+    [Fact]
+    public void GetPath_BodyRouteDoesNotIntrudeOnAnAdjacentWall()
+    {
+        const double clearanceRadius = 0.2;
+        var walls = Rectangle(0, 0, 10, 10);
+        var adjacentWall = new Segment(new WorldPoint(5, 0), new WorldPoint(5, 0.05));
+        walls.Add(adjacentWall);
+        var grid = WalkabilityGrid.Build(walls, cellSize: 0.05, marginCells: 0,
+            clearanceRadius: clearanceRadius);
+        var exit = new Segment(new WorldPoint(4, 0), new WorldPoint(6, 0));
+        var sources = grid.WalkableSourcesNearSegment(exit, grid.CellSize, exitGroupId: 1);
+
+        Assert.NotEmpty(sources);
+        Assert.All(sources, source => Assert.True(source.ArrivalPoint is { } arrival &&
+            DistanceToSegment(arrival, adjacentWall) >= clearanceRadius - 1e-10));
+
+        var path = DistanceMapCalculator.FindPath(
+            grid, DistanceMapCalculator.Compute(grid, sources), new WorldPoint(4.5, 5));
+
+        Assert.NotNull(path);
+        Assert.True(DistanceToSegment(path!.Arrival, adjacentWall) >= clearanceRadius - 1e-10);
+        Assert.Equal(clearanceRadius, DistanceToSegment(path.Arrival, exit), precision: 10);
     }
 
     [Fact]
@@ -521,4 +550,18 @@ public class DistanceMapCalculatorTests
         path.Zip(path.Skip(1)).Sum(segment => Math.Sqrt(
             Math.Pow(segment.Second.X - segment.First.X, 2) +
             Math.Pow(segment.Second.Y - segment.First.Y, 2)));
+
+    private static double DistanceToSegment(WorldPoint point, Segment segment)
+    {
+        double dx = segment.End.X - segment.Start.X;
+        double dy = segment.End.Y - segment.Start.Y;
+        double lengthSquared = dx * dx + dy * dy;
+        double t = lengthSquared == 0 ? 0 : Math.Clamp(
+            ((point.X - segment.Start.X) * dx + (point.Y - segment.Start.Y) * dy) / lengthSquared,
+            0,
+            1);
+        double nearestX = segment.Start.X + dx * t;
+        double nearestY = segment.Start.Y + dy * t;
+        return Math.Sqrt(Math.Pow(point.X - nearestX, 2) + Math.Pow(point.Y - nearestY, 2));
+    }
 }

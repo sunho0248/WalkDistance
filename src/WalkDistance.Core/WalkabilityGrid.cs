@@ -339,16 +339,62 @@ public sealed class WalkabilityGrid
                 (ClearanceRadius == 0 || legacyPointExit ||
                  Math.Sqrt(SquaredDistance(contact, segment.Start)) >= ClearanceRadius &&
                  Math.Sqrt(SquaredDistance(contact, segment.End)) >= ClearanceRadius) &&
-                HasLineOfSightToExit(center, contact, segment))
+                HasLineOfSightToExit(center, contact, segment) &&
+                TryGetBodyArrival(center, contact, segment, legacyPointExit, out var arrival))
             {
                 sources.Add(new DistanceSource(
                     col, row,
                     ClearanceRadius > 0 ? center : contact,
-                    ClearanceRadius > 0 ? null : segment,
-                    exitGroupId));
+                    segment,
+                    exitGroupId,
+                    arrival));
             }
         }
         return sources;
+    }
+
+    private bool TryGetBodyArrival(
+        WorldPoint source,
+        WorldPoint contact,
+        Segment exit,
+        bool legacyPointExit,
+        out WorldPoint? arrival)
+    {
+        arrival = null;
+        if (ClearanceRadius == 0 || legacyPointExit)
+        {
+            return true;
+        }
+
+        double dx = source.X - contact.X;
+        double dy = source.Y - contact.Y;
+        double length = Math.Sqrt(dx * dx + dy * dy);
+        if (length <= GeometryTolerance(exit))
+        {
+            return false;
+        }
+
+        var exactArrival = new WorldPoint(
+            contact.X + dx * ClearanceRadius / length,
+            contact.Y + dy * ClearanceRadius / length);
+        if (!IsFinite(exactArrival) ||
+            SquaredDistance(exactArrival, ClosestPoint(exit, exactArrival)) <
+            ClearanceRadius * ClearanceRadius - GeometryTolerance(exit) * GeometryTolerance(exit) ||
+            !HasBodyClearance(exactArrival, exit))
+        {
+            return false;
+        }
+
+        arrival = exactArrival;
+        return true;
+    }
+
+    private bool HasBodyClearance(WorldPoint center, Segment exit)
+    {
+        double tolerance = GeometryTolerance(exit);
+        double minimumSquaredDistance = ClearanceRadius * ClearanceRadius - tolerance * tolerance;
+        return _walls.All(wall =>
+            SquaredDistance(center, ClosestPoint(wall, center)) >= minimumSquaredDistance);
     }
 
     /// <summary>
