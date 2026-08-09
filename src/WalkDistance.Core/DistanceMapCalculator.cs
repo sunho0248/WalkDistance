@@ -21,7 +21,11 @@ public readonly record struct DistanceSource(
     Segment? ExitSegment = null,
     int? ExitGroupId = null);
 
-public sealed record WalkingPath(IReadOnlyList<WorldPoint> Points, double Distance);
+public sealed record WalkingPath(
+    IReadOnlyList<WorldPoint> Points,
+    double Distance,
+    WorldPoint Start,
+    WorldPoint Arrival);
 
 internal readonly record struct DistanceRoot(WorldPoint Contact, Segment? ExitSegment);
 
@@ -399,9 +403,11 @@ public static class DistanceMapCalculator
         }
 
         var points = new List<WorldPoint> { point };
+        WorldPoint arrival;
         if (directRoot is { } queryRoot)
         {
             AddIfDifferent(points, queryRoot.Contact);
+            arrival = queryRoot.Contact;
         }
         else if (firstCell is { } pathCell)
         {
@@ -418,11 +424,25 @@ public static class DistanceMapCalculator
                     return null;
                 }
                 AddIfDifferent(points, pathRoot.Contact);
+                arrival = pathRoot.Contact;
                 break;
             }
         }
+        else
+        {
+            return null;
+        }
 
-        return new WalkingPath(points, PathLength(points));
+        return new WalkingPath(points, PathLength(points), point, arrival);
+    }
+
+    internal static WalkingPath? RestorePath(
+        IReadOnlyList<WorldPoint>? points,
+        WorldPoint? start,
+        WorldPoint? arrival)
+    {
+        if (points is not { Count: > 0 }) return null;
+        return new WalkingPath(points, PathLength(points), start ?? points[0], arrival ?? points[^1]);
     }
 
     public static double? GetDistanceAt(

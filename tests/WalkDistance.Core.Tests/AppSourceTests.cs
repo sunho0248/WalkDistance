@@ -48,10 +48,14 @@ public class AppSourceTests
         string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
         string pathOverlay = redraw[redraw.IndexOf("if (showPaths)", StringComparison.Ordinal)..];
 
-        Assert.Contains("if (_farthestPathPoints is { Count: > 0 } farthestPath)", pathOverlay);
-        Assert.Contains("AddBodyClearanceOutline(farthestPath[^1]", pathOverlay);
-        Assert.Contains("if (_queryPathPoints is { Count: > 0 } queryPath)", pathOverlay);
-        Assert.Contains("AddBodyClearanceOutline(queryPath[^1]", pathOverlay);
+        Assert.Contains("if (_farthestPath is { } farthestPath && _bodyResult is { } bodyResult)", pathOverlay);
+        Assert.Contains("AddBodyClearanceOutline(farthestPath.Start", pathOverlay);
+        Assert.Contains("AddBodyClearanceOutline(farthestPath.Arrival", pathOverlay);
+        Assert.Contains("if (_queryPath is { } queryPath)", pathOverlay);
+        Assert.Contains("AddBodyClearanceOutline(queryPath.Start", pathOverlay);
+        Assert.Contains("AddBodyClearanceOutline(queryPath.Arrival", pathOverlay);
+        Assert.DoesNotContain("farthestPath[^1]", pathOverlay);
+        Assert.DoesNotContain("queryPath[^1]", pathOverlay);
         Assert.Contains("isArrival: true", pathOverlay);
         Assert.Contains("StrokeDashArray = isArrival ? null : [4, 2]", source);
     }
@@ -257,10 +261,10 @@ public class AppSourceTests
     public void MainWindow_RedrawPassesComputedDistancesToPathLabelsGatedWithPaths()
     {
         string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
-        string pathOverlay = Slice(redraw, "if (showPaths)", "if (_bodyGrid is not null");
+        string pathOverlay = Slice(redraw, "if (showPaths)", "if (_farthestPath is");
 
-        Assert.Contains("AddPathLabel(_farthestPathPoints, _bodyResult?.MaxDistance, Brushes.OrangeRed", pathOverlay);
-        Assert.Contains("AddPathLabel(_queryPathPoints, _queryDistance, Brushes.DeepSkyBlue", pathOverlay);
+        Assert.Contains("AddPathLabel(_farthestPath?.Points, _bodyResult?.MaxDistance, Brushes.OrangeRed", pathOverlay);
+        Assert.Contains("AddPathLabel(_queryPath?.Points, _queryDistance, Brushes.DeepSkyBlue", pathOverlay);
         Assert.Equal(2, pathOverlay.Split("AddPathLabel(").Length - 1);
         Assert.Equal(2, redraw.Split("AddPathLabel(").Length - 1);
     }
@@ -761,7 +765,7 @@ public class AppSourceTests
         Assert.Contains("AddExitToggle.IsChecked = false", keyDown);
         Assert.Contains("_queryPoint = null", keyDown);
         Assert.Contains("_queryDistance = null", keyDown);
-        Assert.Contains("_queryPathPoints = null", keyDown);
+        Assert.Contains("_queryPath = null", keyDown);
         Assert.Contains("_exitEditor.ClearSelection()", keyDown);
         Assert.Contains("e.Handled = true", keyDown);
         Assert.DoesNotContain("_exitEditor.Clear()", keyDown);
@@ -945,7 +949,7 @@ public class AppSourceTests
                     source.Contains("InvalidateAnalysis();", StringComparison.Ordinal));
         Assert.Contains("_queryPoint = null", source);
         Assert.Contains("_queryDistance = null", source);
-        Assert.Contains("_queryPathPoints = null", source);
+        Assert.Contains("_queryPath = null", source);
     }
 
     private static string Slice(string source, string start, string end)

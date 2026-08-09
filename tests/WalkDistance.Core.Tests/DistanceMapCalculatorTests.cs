@@ -138,6 +138,9 @@ public class DistanceMapCalculatorTests
 
         var path = DistanceMapCalculator.GetPath(grid, result, query)!;
 
+        var walkingPath = DistanceMapCalculator.FindPath(grid, result, query)!;
+        Assert.Equal(query, walkingPath.Start);
+        Assert.Equal(exitPoint, walkingPath.Arrival);
         Assert.Equal(query, path[0]);
         Assert.Equal(exitPoint, path[^1]);
         Assert.Equal(2, path.Count);
@@ -188,12 +191,21 @@ public class DistanceMapCalculatorTests
             Assert.True(source.ExitPoint.Y >= clearanceRadius);
         });
 
-        var path = DistanceMapCalculator.GetPath(
-            grid, DistanceMapCalculator.Compute(grid, sources), new WorldPoint(5, 5))!;
+        var query = new WorldPoint(5, 5);
+        var result = DistanceMapCalculator.Compute(grid, sources);
+        var walkingPath = DistanceMapCalculator.FindPath(grid, result, query)!;
+        var path = walkingPath.Points;
 
-        Assert.True(path[^1].Y >= clearanceRadius);
-        Assert.True(grid.IsWalkable(grid.WorldToCell(path[^1])));
-        Assert.True(grid.HasLineOfSight(path[^2], path[^1]));
+        Assert.Equal(query, walkingPath.Start);
+        Assert.True(walkingPath.Arrival.Y >= clearanceRadius);
+        Assert.True(grid.IsWalkable(grid.WorldToCell(walkingPath.Arrival)));
+        Assert.True(grid.HasLineOfSight(path[^2], walkingPath.Arrival));
+
+        var farthest = result.FarthestCell!.Value;
+        var farthestPath = DistanceMapCalculator.FindPath(
+            grid, result, grid.CellCenter(farthest.Col, farthest.Row))!;
+        Assert.Equal(grid.CellCenter(farthest.Col, farthest.Row), farthestPath.Start);
+        Assert.True(farthestPath.Arrival.Y >= clearanceRadius);
     }
 
     [Fact]
