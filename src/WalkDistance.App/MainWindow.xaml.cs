@@ -35,6 +35,7 @@ public partial class MainWindow : Window
     private string? _startupProjectPath;
     private double _metersPerDrawingUnit = 1;
     private BodyProfile _bodyProfile = BodyProfile.KoreanAdult;
+    private bool _applyBodyMeasurements = true;
     private bool _addExitMode;
     private bool _isPanning;
     private Point _panStart;
@@ -153,14 +154,15 @@ public partial class MainWindow : Window
                            _mapGrid.CellSize == cellSize.Value && _mapGrid.ClearanceRadius == 0
                 ? DistanceMapCache.Create(_mapGrid, _mapResult, null, null, null, null)
                 : null;
+            double clearanceRadius = _applyBodyMeasurements ? profile.ClearanceRadius : 0;
             var bodyAnalysis = _bodyGrid is not null && _bodyResult is not null &&
                                _bodyGrid.CellSize == cellSize.Value && _bodyProfile == profile &&
-                               _bodyGrid.ClearanceRadius == profile.ClearanceRadius
+                               _bodyGrid.ClearanceRadius == clearanceRadius
                 ? DistanceMapCache.Create(_bodyGrid, _bodyResult, _queryPoint, _queryDistance,
-                    _farthestPathPoints, _queryPathPoints, profile)
+                    _farthestPathPoints, _queryPathPoints, _applyBodyMeasurements ? profile : null)
                 : null;
             ProjectFile.Save(path, new ProjectData(
-                Version: 7,
+                Version: 8,
                 CellSize: cellSize.Value,
                 MetersPerDrawingUnit: _metersPerDrawingUnit,
                 Walls: _walls.ToList(),
@@ -169,7 +171,8 @@ public partial class MainWindow : Window
                 ExitPaths: _exitEditor.Paths.Select(exitPath => exitPath.ToList()).ToList(),
                 Analysis: analysis,
                 BodyProfile: profile,
-                BodyAnalysis: bodyAnalysis));
+                BodyAnalysis: bodyAnalysis,
+                ApplyBodyMeasurements: _applyBodyMeasurements));
             _projectPath = path;
             SetDirty(false);
             StatusText.Text = $"프로젝트 저장됨: {System.IO.Path.GetFileName(path)} (DXF 없이 다시 열 수 있음)";
@@ -208,9 +211,10 @@ public partial class MainWindow : Window
             _projectPath = path;
             _metersPerDrawingUnit = data.MetersPerDrawingUnit;
             _bodyProfile = data.BodyProfile!;
+            _applyBodyMeasurements = data.ApplyBodyMeasurements;
             CellSizeBox.Text = data.CellSize.ToString(CultureInfo.InvariantCulture);
+            ApplyBodyMeasurementsToggle.IsChecked = _applyBodyMeasurements;
             ShoulderWidthBox.Text = _bodyProfile.ShoulderWidth.ToString(CultureInfo.InvariantCulture);
-            TorsoCircumferenceBox.Text = _bodyProfile.TorsoCircumference.ToString(CultureInfo.InvariantCulture);
             ResetAnalysis(clearExits: true);
             _exitEditor.LoadPaths(data.ExitPaths!);
             if (data.Analysis is { } cache)
@@ -224,9 +228,13 @@ public partial class MainWindow : Window
 
                     if (data.BodyAnalysis is { } bodyCache)
                     {
+                        double clearanceRadius = _applyBodyMeasurements ? _bodyProfile.ClearanceRadius : 0;
                         var bodyGrid = WalkabilityGrid.Build(
-                            _walls, data.CellSize, clearanceRadius: _bodyProfile.ClearanceRadius);
-                        if (bodyCache.IsCompatibleWith(bodyGrid, _bodyProfile))
+                            _walls, data.CellSize, clearanceRadius: clearanceRadius);
+                        bool isCompatible = _applyBodyMeasurements
+                            ? bodyCache.IsCompatibleWith(bodyGrid, _bodyProfile)
+                            : bodyCache.IsCompatibleWith(bodyGrid);
+                        if (isCompatible)
                         {
                             _bodyGrid = bodyGrid;
                             var restored = bodyCache.Restore(bodyGrid);
@@ -707,14 +715,37 @@ public partial class MainWindow : Window
 
     private void OnBodyProfileChanged(object sender, TextChangedEventArgs e)
     {
-        if (!TryParseBodyProfile(out var profile) || profile == _bodyProfile)
+        if (!_applyBodyMeasurements || !TryParseBodyProfile(out var profile) || profile == _bodyProfile)
         {
             return;
         }
 
         _bodyProfile = profile;
         InvalidateBodyAnalysis();
-        StatusText.Text = $"신체 여유반경 {_bodyProfile.ClearanceRadius:F2} m로 분석을 다시 계산하세요.";
+        StatusText.Text = $"인체 반경 {_bodyProfile.ClearanceRadius:F2} m · 다시 계산하세요.";
+        Redraw();
+    }
+
+    private void OnBodyMeasurementsChanged(object sender, RoutedEventArgs e)
+    {
+        bool apply = ApplyBodyMeasurementsToggle?.IsChecked == true;
+        if (ShoulderWidthBox is not null)
+        {
+            ShoulderWidthBox.IsEnabled = apply;
+        }
+        if (_applyBodyMeasurements == apply)
+        {
+            return;
+        }
+
+        _applyBodyMeasurements = apply;
+        if (_walls.Count > 0)
+        {
+            InvalidateBodyAnalysis();
+        }
+        StatusText.Text = apply
+            ? $"인체 반경 {_bodyProfile.ClearanceRadius:F2} m · 다시 계산하세요."
+            : "인체 치수 미적용 · 다시 계산하세요.";
         Redraw();
     }
 
@@ -812,14 +843,14 @@ public partial class MainWindow : Window
             return profile;
         }
 
-        MessageBox.Show(this, "어깨너비와 몸통둘레는 0보다 큰 숫자여야 합니다.", "알림");
+        MessageBox.Show(this, "어깨너비는 0보다 큰 숫자여야 합니다.", "알림");
         return null;
     }
 
     private bool TryParseBodyProfile(out BodyProfile profile)
     {
         profile = default!;
-        if (ShoulderWidthBox is null || TorsoCircumferenceBox is null)
+        if (ShoulderWidthBox is null)
         {
             return false;
         }
@@ -828,16 +859,12 @@ public partial class MainWindow : Window
                                   CultureInfo.CurrentCulture, out double shoulderWidth) ||
                               double.TryParse(ShoulderWidthBox.Text, NumberStyles.Float,
                                   CultureInfo.InvariantCulture, out shoulderWidth);
-        bool torsoParsed = double.TryParse(TorsoCircumferenceBox.Text, NumberStyles.Float,
-                               CultureInfo.CurrentCulture, out double torsoCircumference) ||
-                           double.TryParse(TorsoCircumferenceBox.Text, NumberStyles.Float,
-                               CultureInfo.InvariantCulture, out torsoCircumference);
-        if (!shoulderParsed || !torsoParsed)
+        if (!shoulderParsed)
         {
             return false;
         }
 
-        profile = new BodyProfile(shoulderWidth, torsoCircumference);
+        profile = new BodyProfile(shoulderWidth);
         return profile.IsValid;
     }
 
@@ -897,6 +924,7 @@ public partial class MainWindow : Window
             return;
         }
         _bodyProfile = profile;
+        double clearanceRadius = _applyBodyMeasurements ? profile.ClearanceRadius : 0;
 
         var walls = _walls.ToArray();
         var exitPaths = _exitEditor.Paths.Select(path => path.ToArray()).ToArray();
@@ -910,7 +938,7 @@ public partial class MainWindow : Window
             await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
             var grids = await Task.Run(() => (
                 Map: WalkabilityGrid.Build(walls, cellSize.Value),
-                Body: WalkabilityGrid.Build(walls, cellSize.Value, clearanceRadius: profile.ClearanceRadius)));
+                Body: WalkabilityGrid.Build(walls, cellSize.Value, clearanceRadius: clearanceRadius)));
             _mapGrid = grids.Map;
             _bodyGrid = grids.Body;
             _mapResult = null;
@@ -997,7 +1025,7 @@ public partial class MainWindow : Window
             _queryDistance = null;
             _queryPathPoints = null;
             StatusText.Text = _bodyResult.FarthestCell is null
-                ? "신체 여유 공간에서 도달 가능한 보행 영역이 없습니다."
+                ? "도달 가능한 보행 영역이 없습니다."
                 : $"최대 보행거리: {_bodyResult.MaxDistance:F2} m · 계산 후 도면을 클릭하면 해당 최단경로를 표시합니다.";
 
             if (_bodyResult.UnreachableCellCount > 0)
@@ -1008,15 +1036,15 @@ public partial class MainWindow : Window
             SetDirty(true);
             Redraw();
         }
-        catch (GridSizeLimitExceededException ex)
+        catch (Exception ex) when (ex is OutOfMemoryException or OverflowException)
         {
             InvalidateAnalysis();
             MessageBox.Show(this,
-                $"격자가 너무 큽니다 ({ex.RequestedCellCount:N0}셀 / 한도 {ex.MaxCellCount:N0}셀). 셀 크기를 키워 다시 계산하세요.",
-                "격자 크기 초과",
+                "격자를 만들 메모리가 부족합니다. 셀 크기를 키워 다시 계산하세요.",
+                "메모리 부족",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
-            StatusText.Text = "계산 중단: 셀 크기를 키워 격자 셀 수를 줄이세요.";
+            StatusText.Text = "계산 중단: 메모리가 부족합니다. 셀 크기를 키워 다시 계산하세요.";
             Redraw();
         }
         catch (Exception ex)
@@ -1414,7 +1442,7 @@ public partial class MainWindow : Window
 
     private void AddBodyClearanceOutline(WorldPoint point, Brush brush, string tooltip)
     {
-        if (_transform is null)
+        if (!_applyBodyMeasurements || _transform is null)
         {
             return;
         }

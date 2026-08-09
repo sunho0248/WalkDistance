@@ -52,15 +52,14 @@
                 <TextBox x:Name="FixedExitLengthBox" Width="50" VerticalAlignment="Center"
                          ToolTip="비우면 두 번 클릭하는 직선 출구 · 값을 입력하면 마우스 위치가 중심인 전체 길이를 벽 따라 실시간 미리보기 · 클릭하면 미리보기 그대로 확정"/>
                 <Separator/>
-                <TextBlock Text="셀 크기(m):" VerticalAlignment="Center" Margin="4,0"/>
-                <TextBox x:Name="CellSizeBox" Width="50" Text="0.2" VerticalAlignment="Center"
+                <TextBlock Text="셀(m):" VerticalAlignment="Center" Margin="4,0"/>
+                <TextBox x:Name="CellSizeBox" Width="50" Text="0.05" VerticalAlignment="Center"
                          TextChanged="OnCellSizeChanged"/>
                 <Separator/>
-                <TextBlock Text="어깨너비(m):" VerticalAlignment="Center" Margin="4,0"/>
+                <CheckBox x:Name="ApplyBodyMeasurementsToggle" Content="인체 치수 적용" IsChecked="True"
+                          Checked="OnBodyMeasurementsChanged" Unchecked="OnBodyMeasurementsChanged" Margin="4,0"/>
+                <TextBlock Text="어깨(m):" VerticalAlignment="Center" Margin="4,0"/>
                 <TextBox x:Name="ShoulderWidthBox" Width="50" Text="0.40" VerticalAlignment="Center"
-                         TextChanged="OnBodyProfileChanged"/>
-                <TextBlock Text="몸통둘레(m):" VerticalAlignment="Center" Margin="4,0"/>
-                <TextBox x:Name="TorsoCircumferenceBox" Width="50" Text="0.95" VerticalAlignment="Center"
                          TextChanged="OnBodyProfileChanged"/>
                 <Separator/>
                 <TextBlock Text="기준거리(m):" VerticalAlignment="Center" Margin="4,0"/>

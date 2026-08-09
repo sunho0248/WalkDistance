@@ -5,18 +5,15 @@ public readonly record struct WorldPoint(double X, double Y);
 public readonly record struct Segment(WorldPoint Start, WorldPoint End);
 
 /// <summary>
-/// Person-sized clearance used when rasterizing a walking plan. The torso is
-/// conservatively treated as a circle, while shoulder width supplies the
-/// minimum side-to-side radius.
+/// Person-sized clearance used when rasterizing a walking plan.
 /// </summary>
-public sealed record BodyProfile(double ShoulderWidth, double TorsoCircumference)
+public sealed record BodyProfile(double ShoulderWidth)
 {
-    public static BodyProfile KoreanAdult { get; } = new(0.40, 0.95);
+    public static BodyProfile KoreanAdult { get; } = new(0.40);
 
-    public double ClearanceRadius => Math.Max(ShoulderWidth / 2, TorsoCircumference / (2 * Math.PI));
+    public double ClearanceRadius => ShoulderWidth / 2;
 
-    public bool IsValid => double.IsFinite(ShoulderWidth) && ShoulderWidth > 0 &&
-                           double.IsFinite(TorsoCircumference) && TorsoCircumference > 0;
+    public bool IsValid => double.IsFinite(ShoulderWidth) && ShoulderWidth > 0;
 }
 
 public readonly record struct Bounds(double MinX, double MinY, double MaxX, double MaxY)

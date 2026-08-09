@@ -13,7 +13,8 @@ public sealed record ProjectData(
     List<List<WorldPoint>>? ExitPaths = null,
     DistanceMapCache? Analysis = null,
     BodyProfile? BodyProfile = null,
-    DistanceMapCache? BodyAnalysis = null);
+    DistanceMapCache? BodyAnalysis = null,
+    bool ApplyBodyMeasurements = true);
 
 public static class ProjectFile
 {
@@ -26,7 +27,7 @@ public static class ProjectFile
 
     public static void Save(string path, ProjectData data)
     {
-        var current = NormalizeCurrent(data with { Version = 7 });
+        var current = NormalizeCurrent(data with { Version = 8 });
         ValidateCurrentVersion(current);
         File.WriteAllText(path, JsonSerializer.Serialize(current, Options));
     }
@@ -37,11 +38,16 @@ public static class ProjectFile
         using var document = JsonDocument.Parse(json);
         int version = ReadVersion(document.RootElement);
 
-        if (version is 3 or 4 or 5 or 6 or 7)
+        if (version is 3 or 4 or 5 or 6 or 7 or 8)
         {
             var data = JsonSerializer.Deserialize<ProjectData>(json, Options)
                        ?? throw new InvalidDataException($"올바르지 않은 프로젝트 파일입니다: {path}");
-            var current = NormalizeCurrent(data with { Version = 7, Analysis = version == 6 ? null : data.Analysis });
+            var current = NormalizeCurrent(data with
+            {
+                Version = 8,
+                Analysis = version == 6 ? null : data.Analysis,
+                BodyAnalysis = version < 8 ? null : data.BodyAnalysis,
+            });
             ValidateCurrentVersion(current);
             return current;
         }
@@ -51,7 +57,7 @@ public static class ProjectFile
             var version2 = JsonSerializer.Deserialize<LegacyProjectDataV2>(json, Options)
                            ?? throw new InvalidDataException($"올바르지 않은 프로젝트 파일입니다: {path}");
             var migrated = NormalizeCurrent(new ProjectData(
-                Version: 7,
+                Version: 8,
                 CellSize: version2.CellSize,
                 MetersPerDrawingUnit: version2.MetersPerDrawingUnit,
                 Walls: version2.Walls ?? [],
@@ -91,7 +97,7 @@ public static class ProjectFile
             point.X * dxf.MetersPerDrawingUnit,
             point.Y * dxf.MetersPerDrawingUnit)).ToList();
         var legacyCurrent = NormalizeCurrent(new ProjectData(
-            Version: 7,
+            Version: 8,
             CellSize: legacy.CellSize,
             MetersPerDrawingUnit: dxf.MetersPerDrawingUnit,
             Walls: dxf.Walls.ToList(),
@@ -121,9 +127,9 @@ public static class ProjectFile
 
     private static void ValidateCurrentVersion(ProjectData data)
     {
-        if (data.Version != 7)
+        if (data.Version != 8)
         {
-            throw new InvalidDataException("저장할 프로젝트 버전은 7이어야 합니다.");
+            throw new InvalidDataException("저장할 프로젝트 버전은 8이어야 합니다.");
         }
         if (!double.IsFinite(data.CellSize) || data.CellSize <= 0)
         {
@@ -135,7 +141,7 @@ public static class ProjectFile
         }
         if (data.BodyProfile is not { IsValid: true })
         {
-            throw new InvalidDataException("신체 치수는 0보다 큰 유한한 값이어야 합니다.");
+            throw new InvalidDataException("어깨너비는 0보다 큰 유한한 값이어야 합니다.");
         }
         if (data.Walls is null || data.Walls.Count == 0 || data.Walls.Any(segment =>
                 !IsFinite(segment.Start) || !IsFinite(segment.End)))
@@ -166,18 +172,20 @@ public static class ProjectFile
         var profile = data.BodyProfile ?? BodyProfile.KoreanAdult;
         if (!profile.IsValid)
         {
-            throw new InvalidDataException("신체 치수는 0보다 큰 유한한 값이어야 합니다.");
+            throw new InvalidDataException("어깨너비는 0보다 큰 유한한 값이어야 합니다.");
         }
 
         return data with
         {
-            Version = 7,
+            Version = 8,
             ExitPaths = snapshot,
             Exits = snapshot.Select(path => new Segment(path[0], path[^1])).ToList(),
             BodyProfile = profile,
             Analysis = data.Analysis is { BodyProfile: null, IsSane: true } ? data.Analysis : null,
-            BodyAnalysis = data.BodyAnalysis is { BodyProfile: { } cachedProfile, IsSane: true } &&
-                           cachedProfile == profile
+            BodyAnalysis = data.BodyAnalysis is { IsSane: true } bodyCache &&
+                           (data.ApplyBodyMeasurements
+                               ? bodyCache.BodyProfile == profile
+                               : bodyCache.BodyProfile is null)
                 ? data.BodyAnalysis
                 : null,
         };

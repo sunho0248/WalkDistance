@@ -27,7 +27,7 @@ public sealed class ProjectFileTests : IDisposable
 
         var project = ProjectFile.Load(path);
 
-        Assert.Equal(7, project.Version);
+        Assert.Equal(8, project.Version);
         Assert.Equal(BodyProfile.KoreanAdult, project.BodyProfile);
         Assert.Null(project.Analysis);
     }
@@ -35,7 +35,7 @@ public sealed class ProjectFileTests : IDisposable
     [Fact]
     public void Version6_DropsProfilelessBodyFilteredCacheInsteadOfUsingItAsTheMap()
     {
-        var profile = new BodyProfile(0.5, 1.1);
+        var profile = new BodyProfile(0.5);
         var walls = Rectangle(0, 0, 10, 10);
         var grid = WalkabilityGrid.Build(walls, 1, marginCells: 0, clearanceRadius: profile.ClearanceRadius);
         var source = grid.NearestWalkableCell(new WorldPoint(5, 5))!.Value;
@@ -64,14 +64,14 @@ public sealed class ProjectFileTests : IDisposable
         }));
         var project = ProjectFile.Load(path);
 
-        Assert.Equal(7, project.Version);
+        Assert.Equal(8, project.Version);
         Assert.Equal(profile, project.BodyProfile);
         Assert.Null(project.Analysis);
         Assert.Null(project.BodyAnalysis);
     }
 
     [Fact]
-    public void Version7_RoundTripsSeparateGeometricAndBodyCaches()
+    public void Version8_RoundTripsSeparateGeometricAndBodyCaches()
     {
         var profile = BodyProfile.KoreanAdult;
         var walls = Rectangle(0, 0, 10, 10);
@@ -87,7 +87,7 @@ public sealed class ProjectFileTests : IDisposable
             [new WorldPoint(5, 5), new WorldPoint(6, 6)],
             [new WorldPoint(5, 5), new WorldPoint(7, 7)], profile);
         var path = Path.Combine(_directory, "cached.walkdistance");
-        var expected = new ProjectData(7, 1, 1, walls, [], Analysis: mapCache,
+        var expected = new ProjectData(8, 1, 1, walls, [], Analysis: mapCache,
             BodyProfile: profile, BodyAnalysis: bodyCache);
 
         ProjectFile.Save(path, expected);
@@ -95,7 +95,7 @@ public sealed class ProjectFileTests : IDisposable
         var restoredMap = actual.Analysis!.Restore(mapGrid);
         var restoredBody = actual.BodyAnalysis!.Restore(bodyGrid);
 
-        Assert.Equal(7, actual.Version);
+        Assert.Equal(8, actual.Version);
         Assert.True(actual.Analysis.IsCompatibleWith(mapGrid));
         Assert.True(actual.BodyAnalysis.IsCompatibleWith(bodyGrid, profile));
         Assert.Equal(mapResult.MaxDistance, restoredMap.Result.MaxDistance);
@@ -142,7 +142,7 @@ public sealed class ProjectFileTests : IDisposable
         File.Delete(dxfPath);
         var actual = ProjectFile.Load(projectPath);
 
-        Assert.Equal(7, actual.Version);
+        Assert.Equal(8, actual.Version);
         Assert.Equal(expected.Walls, actual.Walls);
         Assert.Equal(expected.Exits, actual.Exits);
         Assert.Equal(exitPath, Assert.Single(actual.ExitPaths!));
@@ -168,7 +168,7 @@ public sealed class ProjectFileTests : IDisposable
 
         var project = ProjectFile.Load(projectPath);
 
-        Assert.Equal(7, project.Version);
+        Assert.Equal(8, project.Version);
         Assert.Equal(exit, Assert.Single(project.Exits));
         Assert.Equal(new[] { exit.Start, exit.End }, Assert.Single(project.ExitPaths!));
     }
@@ -200,7 +200,7 @@ public sealed class ProjectFileTests : IDisposable
         var legacyResult = DistanceMapCalculator.Compute(grid, new[] { legacySource });
         var migratedResult = DistanceMapCalculator.Compute(grid, migratedSources);
 
-        Assert.Equal(7, project.Version);
+        Assert.Equal(8, project.Version);
         Assert.Equal(new Segment(pointExit, pointExit), migratedExit);
         Assert.Equal(new[] { pointExit, pointExit }, Assert.Single(project.ExitPaths!));
         Assert.Equal(legacySource, Assert.Single(migratedSources));
@@ -234,7 +234,7 @@ public sealed class ProjectFileTests : IDisposable
 
         var project = ProjectFile.Load(projectPath);
 
-        Assert.Equal(7, project.Version);
+        Assert.Equal(8, project.Version);
         Assert.Equal(BodyProfile.KoreanAdult, project.BodyProfile);
         Assert.Single(project.Walls);
         Assert.Equal(new WorldPoint(4, 0), project.Walls[0].End);
@@ -259,9 +259,53 @@ public sealed class ProjectFileTests : IDisposable
     public void UnsupportedVersion_IsRejected()
     {
         var projectPath = Path.Combine(_directory, "future.json");
-        File.WriteAllText(projectPath, "{\"Version\":8}");
+        File.WriteAllText(projectPath, "{\"Version\":9}");
 
         Assert.Throws<InvalidDataException>(() => ProjectFile.Load(projectPath));
+    }
+
+    [Fact]
+    public void Version7_MigratesTorsoProfileToShoulderOnlyAndDropsBodyCache()
+    {
+        var path = Path.Combine(_directory, "version7.walkdistance");
+        File.WriteAllText(path, JsonSerializer.Serialize(new
+        {
+            Version = 7,
+            CellSize = 1.0,
+            MetersPerDrawingUnit = 1.0,
+            Walls = Rectangle(0, 0, 10, 10),
+            Exits = Array.Empty<Segment>(),
+            BodyProfile = new { ShoulderWidth = 0.6, TorsoCircumference = 3.0 },
+            BodyAnalysis = new { },
+        }));
+
+        var project = ProjectFile.Load(path);
+
+        Assert.Equal(8, project.Version);
+        Assert.True(project.ApplyBodyMeasurements);
+        Assert.Equal(new BodyProfile(0.6), project.BodyProfile);
+        Assert.Null(project.BodyAnalysis);
+    }
+
+    [Fact]
+    public void Version8_RoundTripsDisabledBodyMeasurementsWithoutTorsoData()
+    {
+        var walls = Rectangle(0, 0, 10, 10);
+        var grid = WalkabilityGrid.Build(walls, 1, marginCells: 0);
+        var source = grid.NearestWalkableCell(new WorldPoint(5, 5))!.Value;
+        var cache = DistanceMapCache.Create(grid, DistanceMapCalculator.Compute(grid, [source]),
+            null, null, null, null);
+        var path = Path.Combine(_directory, "disabled.walkdistance");
+
+        ProjectFile.Save(path, new ProjectData(8, 1, 1, walls, [], Analysis: cache,
+            BodyProfile: new BodyProfile(0.5), BodyAnalysis: cache, ApplyBodyMeasurements: false));
+        string json = File.ReadAllText(path);
+        var project = ProjectFile.Load(path);
+
+        Assert.DoesNotContain("Torso", json, StringComparison.OrdinalIgnoreCase);
+        Assert.False(project.ApplyBodyMeasurements);
+        Assert.Equal(new BodyProfile(0.5), project.BodyProfile);
+        Assert.NotNull(project.BodyAnalysis);
     }
 
     private static List<Segment> Rectangle(double minX, double minY, double maxX, double maxY) =>

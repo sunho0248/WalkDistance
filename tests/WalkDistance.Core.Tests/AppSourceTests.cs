@@ -3,12 +3,12 @@ namespace WalkDistance.Core.Tests;
 public class AppSourceTests
 {
     [Fact]
-    public void MainWindow_IgnoresStartupBodyProfileTextChangesUntilBothInputsExist()
+    public void MainWindow_IgnoresStartupShoulderTextChangesUntilInputExists()
     {
         string parse = ReadAppMethod("MainWindow.xaml.cs", "private bool TryParseBodyProfile");
         string changed = ReadAppMethod("MainWindow.xaml.cs", "private void OnBodyProfileChanged");
 
-        int guard = parse.IndexOf("ShoulderWidthBox is null || TorsoCircumferenceBox is null", StringComparison.Ordinal);
+        int guard = parse.IndexOf("ShoulderWidthBox is null", StringComparison.Ordinal);
         int read = parse.IndexOf("ShoulderWidthBox.Text", StringComparison.Ordinal);
         Assert.True(guard >= 0 && guard < read,
             "Startup TextChanged must return before parsing an input that InitializeComponent has not created yet.");
@@ -17,7 +17,7 @@ public class AppSourceTests
     }
 
     [Fact]
-    public void MainWindow_UsesEditableKoreanAdultBodyDefaultsForAnalysisAndMarkers()
+    public void MainWindow_UsesOptionalShoulderClearanceForRoutesAndMarkers()
     {
         string xaml = ReadAppFile("MainWindow.xaml");
         string source = ReadAppFile("MainWindow.xaml.cs");
@@ -26,28 +26,33 @@ public class AppSourceTests
 
         Assert.Contains("x:Name=\"ShoulderWidthBox\"", xaml);
         Assert.Contains("Text=\"0.40\"", xaml);
-        Assert.Contains("x:Name=\"TorsoCircumferenceBox\"", xaml);
-        Assert.Contains("Text=\"0.95\"", xaml);
+        Assert.Contains("x:Name=\"ApplyBodyMeasurementsToggle\" Content=\"인체 치수 적용\" IsChecked=\"True\"", xaml);
+        Assert.DoesNotContain("TorsoCircumferenceBox", xaml);
         Assert.Contains("TextChanged=\"OnBodyProfileChanged\"", xaml);
         Assert.Contains("BodyProfile.KoreanAdult", source);
         Assert.Contains("private void OnBodyProfileChanged", source);
+        Assert.Contains("private void OnBodyMeasurementsChanged", source);
+        Assert.Contains("ShoulderWidthBox.IsEnabled", ReadAppMethod("MainWindow.xaml.cs", "private void OnBodyMeasurementsChanged"));
         Assert.Contains("InvalidateBodyAnalysis();", ReadAppMethod("MainWindow.xaml.cs", "private void OnBodyProfileChanged"));
         Assert.Contains("WalkabilityGrid.Build(walls, cellSize.Value)", calculate);
-        Assert.Contains("clearanceRadius: profile.ClearanceRadius", calculate);
+        Assert.Contains("double clearanceRadius = _applyBodyMeasurements ? profile.ClearanceRadius : 0", calculate);
+        Assert.Contains("clearanceRadius: clearanceRadius", calculate);
         Assert.Contains("AddBodyClearanceOutline", redraw);
         Assert.DoesNotContain("AddMarker(point, 8, Brushes.Red", redraw);
     }
 
     [Fact]
-    public void MainWindow_PersistsBodyProfileAndRejectsMismatchedAnalysisCaches()
+    public void MainWindow_PersistsBodyMeasurementSettingAndRejectsMismatchedAnalysisCaches()
     {
         string save = ReadAppMethod("MainWindow.xaml.cs", "private bool SaveProject");
         string load = ReadAppMethod("MainWindow.xaml.cs", "private void OnOpenProject");
 
         Assert.Contains("BodyProfile: profile", save);
+        Assert.Contains("ApplyBodyMeasurements: _applyBodyMeasurements", save);
         Assert.Contains("BodyAnalysis:", save);
         Assert.Contains("data.Analysis", load);
         Assert.Contains("data.BodyAnalysis", load);
+        Assert.Contains("data.ApplyBodyMeasurements", load);
     }
 
     [Fact]
@@ -69,6 +74,7 @@ public class AppSourceTests
         Assert.Contains("DistanceMapCalculator.Compute(bodyGrid, sourceSets.Body)", calculate);
         Assert.Contains("InvalidateBodyAnalysis();", bodyChanged);
         Assert.DoesNotContain("InvalidateAnalysis();", bodyChanged);
+        Assert.Contains("_applyBodyMeasurements", source);
     }
 
     [Fact]
@@ -193,7 +199,8 @@ public class AppSourceTests
         string xaml = ReadAppFile("MainWindow.xaml");
         Assert.Contains("x:Name=\"MapOverlayToggle\" Content=\"디스턴스 맵\"", xaml);
         Assert.Contains("x:Name=\"PathOverlayToggle\" Content=\"보행경로\"", xaml);
-        Assert.Equal(2, xaml.Split("IsChecked=\"True\"").Length - 1);
+        Assert.Contains("x:Name=\"MapOverlayToggle\" Content=\"디스턴스 맵\" IsChecked=\"True\"", xaml);
+        Assert.Contains("x:Name=\"PathOverlayToggle\" Content=\"보행경로\" IsChecked=\"True\"", xaml);
         Assert.Contains("Checked=\"OnOverlayToggleChanged\" Unchecked=\"OnOverlayToggleChanged\"", xaml);
     }
 
@@ -377,10 +384,10 @@ public class AppSourceTests
     }
 
     [Fact]
-    public void MainWindow_DefaultCellSizeIsPointTwoMeters()
+    public void MainWindow_DefaultCellSizeIsPointZeroFiveMeters()
     {
         string xaml = ReadAppFile("MainWindow.xaml");
-        Assert.Contains("x:Name=\"CellSizeBox\" Width=\"50\" Text=\"0.2\"", xaml);
+        Assert.Contains("x:Name=\"CellSizeBox\" Width=\"50\" Text=\"0.05\"", xaml);
     }
 
     [Fact]
@@ -754,7 +761,7 @@ public class AppSourceTests
     public void MainWindow_SuccessfulCalculation_ReportsUnreachableCellsOnlyInStatusText()
     {
         string source = ReadAppFile("MainWindow.xaml.cs");
-        string success = Slice(source, "_bodyResult = results.Body", "catch (GridSizeLimitExceededException ex)");
+        string success = Slice(source, "_bodyResult = results.Body", "catch (Exception ex) when");
 
         Assert.Contains("_bodyResult.UnreachableCellCount > 0", success);
         Assert.Contains("StatusText.Text +=", success);
@@ -811,16 +818,16 @@ public class AppSourceTests
         string preFailureClear = Slice(source, "var grids = await Task.Run", "if (_mapGrid.InteriorCellCount == 0)");
         string openOutline = Slice(source, "if (_mapGrid.InteriorCellCount == 0)", "var sourceSets =");
         string noExit = Slice(source, "if (sourceSets.Map.Count == 0)", "var results = await Task.Run");
-        string sizeLimit = Slice(source, "catch (GridSizeLimitExceededException ex)", "catch (Exception ex)");
+        string allocationFailure = Slice(source, "catch (Exception ex) when", "\n        catch (Exception ex)");
 
         AssertFailureClearsQuery(preFailureClear);
         Assert.Contains("닫힌 건물 외곽선", openOutline);
         Assert.Contains("계산 중단", openOutline);
         Assert.Contains("사용 가능한 출구", noExit);
         Assert.Contains("계산 중단", noExit);
-        Assert.Contains("InvalidateAnalysis();", sizeLimit);
-        Assert.Contains("격자가 너무 큽니다", sizeLimit);
-        Assert.Contains("계산 중단", sizeLimit);
+        Assert.Contains("InvalidateAnalysis();", allocationFailure);
+        Assert.Contains("메모리가 부족", allocationFailure);
+        Assert.Contains("셀 크기를 키워", allocationFailure);
     }
 
     [Fact]

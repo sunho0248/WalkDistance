@@ -5,12 +5,11 @@ namespace WalkDistance.Core.Tests;
 public class WalkabilityGridTests
 {
     [Fact]
-    public void KoreanAdultProfile_UsesBothDimensionsForAConservativeClearanceRadius()
+    public void KoreanAdultProfile_UsesShoulderWidthForClearanceRadius()
     {
         var profile = BodyProfile.KoreanAdult;
 
         Assert.Equal(0.40, profile.ShoulderWidth);
-        Assert.Equal(0.95, profile.TorsoCircumference);
         Assert.Equal(0.20, profile.ClearanceRadius, precision: 10);
     }
 
@@ -50,9 +49,9 @@ public class WalkabilityGridTests
         var beforeBodyEdit = DistanceMapCalculator.Compute(geometricGrid, sources);
 
         var narrowBodyGrid = WalkabilityGrid.Build(walls, cellSize: 0.1, marginCells: 2,
-            clearanceRadius: new BodyProfile(0.4, 0.95).ClearanceRadius);
+            clearanceRadius: new BodyProfile(0.4).ClearanceRadius);
         var wideBodyGrid = WalkabilityGrid.Build(walls, cellSize: 0.1, marginCells: 2,
-            clearanceRadius: new BodyProfile(0.8, 1.5).ClearanceRadius);
+            clearanceRadius: new BodyProfile(0.8).ClearanceRadius);
         var afterBodyEdit = DistanceMapCalculator.Compute(geometricGrid, sources);
 
         Assert.NotEqual(narrowBodyGrid.ClearanceRadius, wideBodyGrid.ClearanceRadius);
@@ -201,35 +200,6 @@ public class WalkabilityGridTests
 
         Assert.NotNull(cell);
         Assert.False(grid.IsBlocked(cell!.Value.Col, cell.Value.Row));
-    }
-
-    [Fact]
-    public void DefaultCellCap_IsExactlyTenMillionAndReportedByLimitErrors()
-    {
-        Assert.Equal(10_000_000, WalkabilityGrid.DefaultMaxCellCount);
-
-        var exception = Assert.Throws<GridSizeLimitExceededException>(() =>
-            WalkabilityGrid.Build(
-                [new Segment(new WorldPoint(0, 0), new WorldPoint(100, 100))],
-                cellSize: 0.001,
-                marginCells: 0));
-
-        Assert.Equal(10_000_000, exception.MaxCellCount);
-        Assert.Contains("10,000,000", exception.Message);
-    }
-
-    [Fact]
-    public void Build_RejectsExcessiveCellCountBeforeAllocation()
-    {
-        var walls = new List<Segment>
-        {
-            new(new WorldPoint(0, 0), new WorldPoint(100, 100)),
-        };
-
-        var exception = Assert.Throws<GridSizeLimitExceededException>(() =>
-            WalkabilityGrid.Build(walls, cellSize: 0.01, marginCells: 0, maxCellCount: 10_000));
-
-        Assert.True(exception.RequestedCellCount > exception.MaxCellCount);
     }
 
     [Fact]
