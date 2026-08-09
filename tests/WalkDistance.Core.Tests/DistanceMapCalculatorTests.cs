@@ -172,6 +172,44 @@ public class DistanceMapCalculatorTests
     }
 
     [Fact]
+    public void GetPath_BodyRouteEndsAtWalkableCenterClearOfTheExit()
+    {
+        const double clearanceRadius = 0.2;
+        var grid = WalkabilityGrid.Build(Rectangle(0, 0, 10, 10), cellSize: 0.05, marginCells: 0,
+            clearanceRadius: clearanceRadius);
+        var exit = new Segment(new WorldPoint(4, 0), new WorldPoint(6, 0));
+        var sources = grid.WalkableSourcesNearSegment(exit, grid.CellSize, exitGroupId: 1);
+
+        Assert.NotEmpty(sources);
+        Assert.All(sources, source =>
+        {
+            Assert.Equal(grid.CellCenter(source.Col, source.Row), source.ExitPoint);
+            Assert.Null(source.ExitSegment);
+            Assert.True(source.ExitPoint.Y >= clearanceRadius);
+        });
+
+        var path = DistanceMapCalculator.GetPath(
+            grid, DistanceMapCalculator.Compute(grid, sources), new WorldPoint(5, 5))!;
+
+        Assert.True(path[^1].Y >= clearanceRadius);
+        Assert.True(grid.IsWalkable(grid.WorldToCell(path[^1])));
+        Assert.True(grid.HasLineOfSight(path[^2], path[^1]));
+    }
+
+    [Fact]
+    public void GetPath_BodyRouteHasNoArrivalWhenExitIsTooNarrow()
+    {
+        var grid = WalkabilityGrid.Build(Rectangle(0, 0, 10, 10), cellSize: 0.05, marginCells: 0,
+            clearanceRadius: 0.2);
+        var narrowExit = new Segment(new WorldPoint(4.9, 0), new WorldPoint(5.1, 0));
+        var sources = grid.WalkableSourcesNearSegment(narrowExit, grid.CellSize, exitGroupId: 1);
+
+        Assert.Empty(sources);
+        Assert.Null(DistanceMapCalculator.GetPath(
+            grid, DistanceMapCalculator.Compute(grid, sources), new WorldPoint(5, 5)));
+    }
+
+    [Fact]
     public void HasLineOfSight_RejectsWallCellsAndBlockedDiagonalCorners()
     {
         var walls = new List<Segment>

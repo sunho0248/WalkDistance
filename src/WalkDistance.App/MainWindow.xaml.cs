@@ -1286,6 +1286,11 @@ public partial class MainWindow : Window
             {
                 AddBodyClearanceOutline(_bodyGrid.CellCenter(farthest.Col, farthest.Row), Brushes.OrangeRed,
                     $"최대 보행거리 지점 ({_bodyResult.MaxDistance:F2} m)");
+                if (_farthestPathPoints is { Count: > 0 } farthestPath)
+                {
+                    AddBodyClearanceOutline(farthestPath[^1], Brushes.OrangeRed,
+                        "최대 보행거리 도착 중심", isArrival: true);
+                }
             }
 
             if (_queryPoint is { } queryPoint)
@@ -1295,6 +1300,11 @@ public partial class MainWindow : Window
                     : "도달 불가능 또는 벽";
                 AddBodyClearanceOutline(queryPoint,
                     _queryDistance is null ? Brushes.Gray : Brushes.DeepSkyBlue, tooltip);
+                if (_queryPathPoints is { Count: > 0 } queryPath)
+                {
+                    AddBodyClearanceOutline(queryPath[^1], Brushes.DeepSkyBlue,
+                        "선택 지점 경로 도착 중심", isArrival: true);
+                }
             }
         }
     }
@@ -1440,7 +1450,7 @@ public partial class MainWindow : Window
         DrawingCanvas.Children.Add(ellipse);
     }
 
-    private void AddBodyClearanceOutline(WorldPoint point, Brush brush, string tooltip)
+    private void AddBodyClearanceOutline(WorldPoint point, Brush brush, string tooltip, bool isArrival = false)
     {
         if (!_applyBodyMeasurements || _transform is null)
         {
@@ -1456,6 +1466,7 @@ public partial class MainWindow : Window
             Fill = Brushes.Transparent,
             Stroke = brush,
             StrokeThickness = 2,
+            StrokeDashArray = isArrival ? null : [4, 2],
             ToolTip = tooltip,
         };
         Canvas.SetLeft(outline, center.X - radius);
