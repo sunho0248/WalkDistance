@@ -341,7 +341,11 @@ public sealed class WalkabilityGrid
                  Math.Sqrt(SquaredDistance(contact, segment.End)) >= ClearanceRadius) &&
                 HasLineOfSightToExit(center, contact, segment))
             {
-                sources.Add(new DistanceSource(col, row, contact, segment, exitGroupId));
+                sources.Add(new DistanceSource(
+                    col, row,
+                    ClearanceRadius > 0 ? center : contact,
+                    ClearanceRadius > 0 ? null : segment,
+                    exitGroupId));
             }
         }
         return sources;

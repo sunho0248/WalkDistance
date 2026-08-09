@@ -42,6 +42,21 @@ public class AppSourceTests
     }
 
     [Fact]
+    public void MainWindow_RendersSolidArrivalClearanceOnlyForSuccessfulBodyRoutes()
+    {
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
+        string pathOverlay = redraw[redraw.IndexOf("if (showPaths)", StringComparison.Ordinal)..];
+
+        Assert.Contains("if (_farthestPathPoints is { Count: > 0 } farthestPath)", pathOverlay);
+        Assert.Contains("AddBodyClearanceOutline(farthestPath[^1]", pathOverlay);
+        Assert.Contains("if (_queryPathPoints is { Count: > 0 } queryPath)", pathOverlay);
+        Assert.Contains("AddBodyClearanceOutline(queryPath[^1]", pathOverlay);
+        Assert.Contains("isArrival: true", pathOverlay);
+        Assert.Contains("StrokeDashArray = isArrival ? null : [4, 2]", source);
+    }
+
+    [Fact]
     public void MainWindow_PersistsBodyMeasurementSettingAndRejectsMismatchedAnalysisCaches()
     {
         string save = ReadAppMethod("MainWindow.xaml.cs", "private bool SaveProject");
