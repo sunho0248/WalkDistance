@@ -2,7 +2,7 @@
 
 건축 DXF 도면의 벽을 보행 가능 격자로 변환하고, 각 지점에서 가장 가까운 출구까지의 보행거리를 보여 주는 Windows 데스크톱 프로그램입니다.
 
-- GitHub Release: https://github.com/sunho0248/WalkDistance/releases/tag/v1.3.3
+- GitHub Release: https://github.com/sunho0248/WalkDistance/releases/tag/v1.3.4
 - 지원 환경: Windows 10/11 x64
 
 
@@ -10,7 +10,7 @@
 
 ## 바로 실행하기
 
-가장 쉬운 방법은 [v1.3.3 Release](https://github.com/sunho0248/WalkDistance/releases/tag/v1.3.3)에서 `WalkDistance-win-x64.zip`를 내려받는 것입니다.
+가장 쉬운 방법은 [v1.3.4 Release](https://github.com/sunho0248/WalkDistance/releases/tag/v1.3.4)에서 `WalkDistance-win-x64.zip`를 내려받는 것입니다.
 
 1. ZIP 파일의 압축을 풉니다.
 2. `WalkDistance.exe`를 실행합니다.
