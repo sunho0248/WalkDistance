@@ -19,7 +19,8 @@ public readonly record struct DistanceSource(
     int Row,
     WorldPoint ExitPoint,
     Segment? ExitSegment = null,
-    int? ExitGroupId = null);
+    int? ExitGroupId = null,
+    WorldPoint? ArrivalPoint = null);
 
 public sealed record WalkingPath(
     IReadOnlyList<WorldPoint> Points,
@@ -27,7 +28,11 @@ public sealed record WalkingPath(
     WorldPoint Start,
     WorldPoint Arrival);
 
-internal readonly record struct DistanceRoot(WorldPoint Contact, Segment? ExitSegment);
+internal readonly record struct DistanceRoot(
+    WorldPoint Contact,
+    Segment? ExitSegment,
+    WorldPoint Arrival,
+    bool ContactIsExit);
 
 internal sealed record DistanceField(
     double[,] Distances,
@@ -51,7 +56,10 @@ public static class DistanceMapCalculator
                 source.Row,
                 grid.InBounds(source.Col, source.Row)
                     ? grid.CellCenter(source.Col, source.Row)
-                    : default))
+                    : default,
+                ArrivalPoint: grid.ClearanceRadius > 0 && grid.InBounds(source.Col, source.Row)
+                    ? grid.CellCenter(source.Col, source.Row)
+                    : null))
             .ToList();
         return Compute(grid, centeredSources);
     }
@@ -151,14 +159,18 @@ public static class DistanceMapCalculator
                 continue;
             }
 
-            var root = new DistanceRoot(source.ExitPoint, source.ExitSegment);
+            var root = new DistanceRoot(
+                source.ExitPoint,
+                source.ExitSegment,
+                source.ArrivalPoint ?? source.ExitPoint,
+                source.ArrivalPoint is null);
             var center = grid.CellCenter(cell.Col, cell.Row);
             if (!HasLineOfSightToRoot(grid, center, root))
             {
                 continue;
             }
 
-            double sourceDistance = Distance(center, root.Contact);
+            double sourceDistance = Distance(center, root.Contact) + ArrivalLegLength(root);
             if (sourceDistance < dist[cell.Row, cell.Col])
             {
                 dist[cell.Row, cell.Col] = sourceDistance;
@@ -216,7 +228,7 @@ public static class DistanceMapCalculator
                 else if (roots.TryGetValue(current, out var root) &&
                          HasLineOfSightToRoot(grid, nextCenter, root))
                 {
-                    double anyAngleCandidate = Distance(nextCenter, root.Contact);
+                    double anyAngleCandidate = Distance(nextCenter, root.Contact) + ArrivalLegLength(root);
                     if (anyAngleCandidate <= candidate)
                     {
                         candidate = anyAngleCandidate;
@@ -388,7 +400,7 @@ public static class DistanceMapCalculator
         else if (roots.TryGetValue(cell, out var root) &&
                  HasLineOfSightToRoot(grid, point, root))
         {
-            double candidate = Distance(point, root.Contact);
+            double candidate = Distance(point, root.Contact) + ArrivalLegLength(root);
             if (candidate <= bestDistance)
             {
                 bestDistance = candidate;
@@ -407,7 +419,8 @@ public static class DistanceMapCalculator
         if (directRoot is { } queryRoot)
         {
             AddIfDifferent(points, queryRoot.Contact);
-            arrival = queryRoot.Contact;
+            AddIfDifferent(points, queryRoot.Arrival);
+            arrival = queryRoot.Arrival;
         }
         else if (firstCell is { } pathCell)
         {
@@ -424,7 +437,8 @@ public static class DistanceMapCalculator
                     return null;
                 }
                 AddIfDifferent(points, pathRoot.Contact);
-                arrival = pathRoot.Contact;
+                AddIfDifferent(points, pathRoot.Arrival);
+                arrival = pathRoot.Arrival;
                 break;
             }
         }
@@ -460,9 +474,12 @@ public static class DistanceMapCalculator
         WorldPoint point,
         DistanceRoot root) =>
         IsFinite(root.Contact) &&
-        (root.ExitSegment is { } exit
+        (root.ContactIsExit && root.ExitSegment is { } exit
             ? grid.HasLineOfSightToExit(point, root.Contact, exit)
             : grid.HasLineOfSight(point, root.Contact));
+
+    private static double ArrivalLegLength(DistanceRoot root) =>
+        Distance(root.Contact, root.Arrival);
 
     private static void AddIfDifferent(List<WorldPoint> points, WorldPoint point)
     {
