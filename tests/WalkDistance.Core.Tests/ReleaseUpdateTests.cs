@@ -11,13 +11,13 @@ public sealed class ReleaseUpdateTests : IDisposable
     public ReleaseUpdateTests() => Directory.CreateDirectory(_directory);
 
     [Theory]
-    [InlineData("v1.3.3", true)]
+    [InlineData("v1.3.4", true)]
     [InlineData("1.3.10", true)]
-    [InlineData("v1.3.2", false)]
+    [InlineData("v1.3.3", false)]
     [InlineData("v1.2.99", false)]
     [InlineData("not-a-version", false)]
     public void IsNewer_UsesNumericVersions(string tag, bool expected) =>
-        Assert.Equal(expected, ReleaseUpdate.IsNewer(tag, new Version(1, 3, 2, 0)));
+        Assert.Equal(expected, ReleaseUpdate.IsNewer(tag, new Version(1, 3, 3, 0)));
 
     [Fact]
     public void SelectWindowsX64Zip_RequiresOneExpectedAsset()
@@ -77,6 +77,35 @@ public sealed class ReleaseUpdateTests : IDisposable
         UpdatePackage.ExtractSafely(zip, stage, "WalkDistance.exe");
 
         Assert.Equal("app", File.ReadAllText(Path.Combine(stage, "WalkDistance.exe")));
+    }
+
+    [Fact]
+    public void StageUpdater_LeavesDownloadedPackageReadable()
+    {
+        string install = Path.Combine(_directory, "install");
+        string update = Path.Combine(_directory, "update");
+        string package = Path.Combine(update, ReleaseUpdate.WindowsX64ZipName);
+        Directory.CreateDirectory(install);
+        Directory.CreateDirectory(update);
+        File.WriteAllText(Path.Combine(install, "WalkDistance.Updater.exe"), "helper");
+        File.WriteAllText(Path.Combine(install, ReleaseUpdate.WindowsX64ZipName), "old package");
+        File.WriteAllText(package, "downloaded package");
+
+        using (File.Open(package, FileMode.Open, FileAccess.Read, FileShare.None))
+            UpdatePackage.StageUpdater(install, update);
+
+        Assert.Equal("downloaded package", File.ReadAllText(package));
+        Assert.True(File.Exists(Path.Combine(update, "updater", "WalkDistance.Updater.exe")));
+    }
+
+    [Fact]
+    public void CopyDirectory_RejectsDestinationInsideSource()
+    {
+        string source = Path.Combine(_directory, "source");
+        Directory.CreateDirectory(source);
+
+        Assert.Throws<IOException>(() => UpdatePackage.CopyDirectory(source, source));
+        Assert.Throws<IOException>(() => UpdatePackage.CopyDirectory(source, Path.Combine(source, "copy")));
     }
 
     [Fact]

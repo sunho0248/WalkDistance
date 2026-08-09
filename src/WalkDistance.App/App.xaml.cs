@@ -50,7 +50,7 @@ public partial class App : Application
             return;
         }
 
-        Version currentVersion = typeof(App).Assembly.GetName().Version ?? new Version(1, 3, 2);
+        Version currentVersion = typeof(App).Assembly.GetName().Version ?? new Version(1, 3, 3);
         GitHubAsset? asset = ReleaseUpdate.SelectWindowsX64Zip(release.Assets);
         if (!ReleaseUpdate.IsNewer(release.TagName, currentVersion) || asset is null ||
             !PackageIntegrity.TryParseSha256Digest(asset.Digest, out _))
@@ -98,11 +98,11 @@ public partial class App : Application
     private static void StartUpdater(string tempDirectory, string packagePath)
     {
         string installDirectory = AppContext.BaseDirectory;
-        string helperPath = Path.Combine(tempDirectory, "WalkDistance.Updater.exe");
+        string helperPath = Path.Combine(tempDirectory, "updater", "WalkDistance.Updater.exe");
         if (!File.Exists(Path.Combine(installDirectory, "WalkDistance.Updater.exe")))
             throw new FileNotFoundException("업데이트 도우미를 찾을 수 없습니다.", installDirectory);
 
-        UpdatePackage.CopyDirectory(installDirectory, tempDirectory);
+        UpdatePackage.StageUpdater(installDirectory, tempDirectory);
         if (!File.Exists(helperPath))
             throw new FileNotFoundException("업데이트 도우미를 찾을 수 없습니다.", helperPath);
 
