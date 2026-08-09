@@ -16,7 +16,7 @@ public static class GitHubReleaseClient
     public static HttpClient CreateClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("WalkDistance", "1.3.2"));
+        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("WalkDistance", "1.3.3"));
         client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return client;
     }
@@ -212,6 +212,13 @@ public static class UpdatePackage
 
     public static void CopyDirectory(string source, string destination, Action<string, string>? copyFile = null)
     {
+        source = Path.GetFullPath(source);
+        destination = Path.GetFullPath(destination);
+        if (destination.StartsWith(source.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(source, destination, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("대상 폴더는 원본 폴더 안에 있을 수 없습니다.");
+
         foreach (string directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
             Directory.CreateDirectory(Path.Combine(destination, Path.GetRelativePath(source, directory)));
 
@@ -223,6 +230,9 @@ public static class UpdatePackage
             (copyFile ?? CopyFile)(file, target);
         }
     }
+
+    public static void StageUpdater(string installDirectory, string updateDirectory) =>
+        CopyDirectory(installDirectory, Path.Combine(updateDirectory, "updater"));
 
     public static void ReplaceWithBackup(string staging, string installDirectory, string backupDirectory,
         Action<string, string>? copyFile = null)
