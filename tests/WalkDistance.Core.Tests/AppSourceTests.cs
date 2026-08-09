@@ -3,6 +3,75 @@ namespace WalkDistance.Core.Tests;
 public class AppSourceTests
 {
     [Fact]
+    public void MainWindow_IgnoresStartupBodyProfileTextChangesUntilBothInputsExist()
+    {
+        string parse = ReadAppMethod("MainWindow.xaml.cs", "private bool TryParseBodyProfile");
+        string changed = ReadAppMethod("MainWindow.xaml.cs", "private void OnBodyProfileChanged");
+
+        int guard = parse.IndexOf("ShoulderWidthBox is null || TorsoCircumferenceBox is null", StringComparison.Ordinal);
+        int read = parse.IndexOf("ShoulderWidthBox.Text", StringComparison.Ordinal);
+        Assert.True(guard >= 0 && guard < read,
+            "Startup TextChanged must return before parsing an input that InitializeComponent has not created yet.");
+        Assert.Contains("InvalidateBodyAnalysis();", changed);
+        Assert.DoesNotContain("InvalidateAnalysis();", changed);
+    }
+
+    [Fact]
+    public void MainWindow_UsesEditableKoreanAdultBodyDefaultsForAnalysisAndMarkers()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        string calculate = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
+        string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
+
+        Assert.Contains("x:Name=\"ShoulderWidthBox\"", xaml);
+        Assert.Contains("Text=\"0.40\"", xaml);
+        Assert.Contains("x:Name=\"TorsoCircumferenceBox\"", xaml);
+        Assert.Contains("Text=\"0.95\"", xaml);
+        Assert.Contains("TextChanged=\"OnBodyProfileChanged\"", xaml);
+        Assert.Contains("BodyProfile.KoreanAdult", source);
+        Assert.Contains("private void OnBodyProfileChanged", source);
+        Assert.Contains("InvalidateBodyAnalysis();", ReadAppMethod("MainWindow.xaml.cs", "private void OnBodyProfileChanged"));
+        Assert.Contains("WalkabilityGrid.Build(walls, cellSize.Value)", calculate);
+        Assert.Contains("clearanceRadius: profile.ClearanceRadius", calculate);
+        Assert.Contains("AddBodyClearanceOutline", redraw);
+        Assert.DoesNotContain("AddMarker(point, 8, Brushes.Red", redraw);
+    }
+
+    [Fact]
+    public void MainWindow_PersistsBodyProfileAndRejectsMismatchedAnalysisCaches()
+    {
+        string save = ReadAppMethod("MainWindow.xaml.cs", "private bool SaveProject");
+        string load = ReadAppMethod("MainWindow.xaml.cs", "private void OnOpenProject");
+
+        Assert.Contains("BodyProfile: profile", save);
+        Assert.Contains("BodyAnalysis:", save);
+        Assert.Contains("data.Analysis", load);
+        Assert.Contains("data.BodyAnalysis", load);
+    }
+
+    [Fact]
+    public void MainWindow_UsesGeometricMapAndBodyNavigationTracksIndependently()
+    {
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        string bodyChanged = ReadAppMethod("MainWindow.xaml.cs", "private void OnBodyProfileChanged");
+        string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
+        string calculate = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
+
+        Assert.Contains("private WalkabilityGrid? _mapGrid", source);
+        Assert.Contains("private DistanceMapResult? _mapResult", source);
+        Assert.Contains("private WalkabilityGrid? _bodyGrid", source);
+        Assert.Contains("private DistanceMapResult? _bodyResult", source);
+        Assert.Contains("DrawHeatmap(_mapGrid, _heatmapBitmap)", redraw);
+        Assert.Contains("_bodyResult?.MaxDistance", redraw);
+        Assert.Contains("DistanceMapCalculator.FindPath(_bodyGrid, _bodyResult", source);
+        Assert.Contains("DistanceMapCalculator.Compute(mapGrid, sourceSets.Map)", calculate);
+        Assert.Contains("DistanceMapCalculator.Compute(bodyGrid, sourceSets.Body)", calculate);
+        Assert.Contains("InvalidateBodyAnalysis();", bodyChanged);
+        Assert.DoesNotContain("InvalidateAnalysis();", bodyChanged);
+    }
+
+    [Fact]
     public void MainWindow_SpaceCommitsOnlyTheExactValidExitPreview()
     {
         string source = ReadAppFile("MainWindow.xaml.cs");
@@ -166,9 +235,9 @@ public class AppSourceTests
     public void MainWindow_RedrawPassesComputedDistancesToPathLabelsGatedWithPaths()
     {
         string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
-        string pathOverlay = Slice(redraw, "if (showPaths)", "if (_grid is not null");
+        string pathOverlay = Slice(redraw, "if (showPaths)", "if (_bodyGrid is not null");
 
-        Assert.Contains("AddPathLabel(_farthestPathPoints, _result?.MaxDistance, Brushes.OrangeRed", pathOverlay);
+        Assert.Contains("AddPathLabel(_farthestPathPoints, _bodyResult?.MaxDistance, Brushes.OrangeRed", pathOverlay);
         Assert.Contains("AddPathLabel(_queryPathPoints, _queryDistance, Brushes.DeepSkyBlue", pathOverlay);
         Assert.Equal(2, pathOverlay.Split("AddPathLabel(").Length - 1);
         Assert.Equal(2, redraw.Split("AddPathLabel(").Length - 1);
@@ -253,7 +322,7 @@ public class AppSourceTests
     public void MainWindow_ContoursUseDistinctMinorAndMajorStylesWithTenMeterLabels()
     {
         string draw = ReadAppMethod("MainWindow.xaml.cs", "private void DrawContours");
-        string refreshAnalysis = ReadAppMethod("MainWindow.xaml.cs", "private void RefreshAnalysisCaches");
+        string refreshAnalysis = ReadAppMethod("MainWindow.xaml.cs", "private void RefreshMapCaches");
 
         Assert.Contains("level.Key % 10 == 0", draw);
         Assert.Contains("Brushes.DimGray", draw);
@@ -268,9 +337,9 @@ public class AppSourceTests
     public void MainWindow_CachesTenMeterContourComponentsWithGridScaledTolerance()
     {
         string source = ReadAppFile("MainWindow.xaml.cs");
-        string refreshAnalysis = ReadAppMethod("MainWindow.xaml.cs", "private void RefreshAnalysisCaches");
+        string refreshAnalysis = ReadAppMethod("MainWindow.xaml.cs", "private void RefreshMapCaches");
         string refreshThreshold = ReadAppMethod("MainWindow.xaml.cs", "private void RefreshThresholdCaches");
-        string clear = ReadAppMethod("MainWindow.xaml.cs", "private void ClearAnalysisCaches");
+        string clear = ReadAppMethod("MainWindow.xaml.cs", "private void ClearMapCaches");
         string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
         string draw = ReadAppMethod("MainWindow.xaml.cs", "private void DrawContours");
 
@@ -278,7 +347,7 @@ public class AppSourceTests
         int contours = refreshAnalysis.IndexOf("_normalContours = DistanceContourGenerator.Generate", StringComparison.Ordinal);
         int components = refreshAnalysis.IndexOf("_normalContourComponents = DistanceContourAssembler.Assemble", StringComparison.Ordinal);
         Assert.True(contours >= 0 && components > contours);
-        Assert.Contains("Math.Max(_grid.CellSize * 1e-6, 1e-9)", refreshAnalysis);
+        Assert.Contains("Math.Max(_mapGrid.CellSize * 1e-6, 1e-9)", refreshAnalysis);
         Assert.DoesNotContain("DistanceContourAssembler.Assemble", refreshThreshold);
         Assert.Contains("_normalContourComponents = []", clear);
         Assert.Contains("DrawContours(_normalContours, _thresholdContours, _normalContourComponents)", redraw);
@@ -354,9 +423,9 @@ public class AppSourceTests
         string redraw = Slice(source, "private void Redraw", "private void DrawHeatmap");
         string pathOverlay = redraw[redraw.IndexOf("if (showPaths)", StringComparison.Ordinal)..];
 
-        Assert.Contains("                AddMarker(point, 8, Brushes.Red", pathOverlay);
+        Assert.Contains("AddBodyClearanceOutline", pathOverlay);
         Assert.Contains("            if (_queryPoint is { } queryPoint)", pathOverlay);
-        Assert.DoesNotContain("AddMarker(point, 8, Brushes.Red", redraw[..redraw.IndexOf("if (showPaths)", StringComparison.Ordinal)]);
+        Assert.DoesNotContain("AddBodyClearanceOutline", redraw[..redraw.IndexOf("if (showPaths)", StringComparison.Ordinal)]);
     }
 
     [Fact]
@@ -472,7 +541,8 @@ public class AppSourceTests
 
         Assert.Contains("_exitEditor.Paths", method);
         Assert.Contains(".Zip(path.Skip(1), (start, end) => new Segment(start, end))", method);
-        Assert.Contains("WalkableSourcesNearSegment(exit, grid.CellSize, exitGroupId)", method);
+        Assert.Contains("WalkableSourcesNearSegment(exit, mapGrid.CellSize, exitGroupId)", method);
+        Assert.Contains("WalkableSourcesNearSegment(exit, bodyGrid.CellSize, exitGroupId)", method);
     }
 
     [Fact]
@@ -629,7 +699,7 @@ public class AppSourceTests
     {
         string source = ReadAppFile("MainWindow.xaml.cs");
         int clearedSelectionStatusIndex = source.IndexOf("출구 선택을 해제했습니다.", StringComparison.Ordinal);
-        int analysisNullReturnIndex = source.IndexOf("_grid is null || _result is null", StringComparison.Ordinal);
+        int analysisNullReturnIndex = source.IndexOf("_bodyGrid is null || _bodyResult is null", StringComparison.Ordinal);
 
         Assert.True(clearedSelectionStatusIndex >= 0, "Expected a status message clearing stale exit-selection text.");
         Assert.True(analysisNullReturnIndex >= 0, "Expected the analysis-null early return guard in OnCanvasLeftClick.");
@@ -684,9 +754,9 @@ public class AppSourceTests
     public void MainWindow_SuccessfulCalculation_ReportsUnreachableCellsOnlyInStatusText()
     {
         string source = ReadAppFile("MainWindow.xaml.cs");
-        string success = Slice(source, "_result = await Task.Run", "catch (GridSizeLimitExceededException ex)");
+        string success = Slice(source, "_bodyResult = results.Body", "catch (GridSizeLimitExceededException ex)");
 
-        Assert.Contains("_result.UnreachableCellCount > 0", success);
+        Assert.Contains("_bodyResult.UnreachableCellCount > 0", success);
         Assert.Contains("StatusText.Text +=", success);
         Assert.DoesNotContain("MessageBox.Show", success);
     }
@@ -726,7 +796,7 @@ public class AppSourceTests
     public void MainWindow_RejectsOutsideBuildingBeforePathLookup()
     {
         string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasLeftClick");
-        int outsideGuard = method.IndexOf("!_grid.Contains(worldPoint)", StringComparison.Ordinal);
+        int outsideGuard = method.IndexOf("!_bodyGrid.Contains(worldPoint)", StringComparison.Ordinal);
         int findPath = method.IndexOf("DistanceMapCalculator.FindPath", StringComparison.Ordinal);
 
         Assert.True(outsideGuard >= 0);
@@ -738,9 +808,9 @@ public class AppSourceTests
     public void MainWindow_CalculationFailuresClearStaleAnalysisAndShowKoreanGuidance()
     {
         string source = ReadAppFile("MainWindow.xaml.cs");
-        string preFailureClear = Slice(source, "_grid = await Task.Run", "if (_grid.InteriorCellCount == 0)");
-        string openOutline = Slice(source, "if (_grid.InteriorCellCount == 0)", "var sources =");
-        string noExit = Slice(source, "if (sources.Count == 0)", "_result = await Task.Run");
+        string preFailureClear = Slice(source, "var grids = await Task.Run", "if (_mapGrid.InteriorCellCount == 0)");
+        string openOutline = Slice(source, "if (_mapGrid.InteriorCellCount == 0)", "var sourceSets =");
+        string noExit = Slice(source, "if (sourceSets.Map.Count == 0)", "var results = await Task.Run");
         string sizeLimit = Slice(source, "catch (GridSizeLimitExceededException ex)", "catch (Exception ex)");
 
         AssertFailureClearsQuery(preFailureClear);
@@ -748,7 +818,7 @@ public class AppSourceTests
         Assert.Contains("계산 중단", openOutline);
         Assert.Contains("사용 가능한 출구", noExit);
         Assert.Contains("계산 중단", noExit);
-        AssertFailureClearsQuery(sizeLimit);
+        Assert.Contains("InvalidateAnalysis();", sizeLimit);
         Assert.Contains("격자가 너무 큽니다", sizeLimit);
         Assert.Contains("계산 중단", sizeLimit);
     }
@@ -849,7 +919,8 @@ public class AppSourceTests
 
     private static void AssertFailureClearsQuery(string source)
     {
-        Assert.Contains("_result = null", source);
+        Assert.True(source.Contains("_bodyResult = null", StringComparison.Ordinal) ||
+                    source.Contains("InvalidateAnalysis();", StringComparison.Ordinal));
         Assert.Contains("_queryPoint = null", source);
         Assert.Contains("_queryDistance = null", source);
         Assert.Contains("_queryPathPoints = null", source);

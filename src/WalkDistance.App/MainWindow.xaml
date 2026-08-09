@@ -56,6 +56,13 @@
                 <TextBox x:Name="CellSizeBox" Width="50" Text="0.2" VerticalAlignment="Center"
                          TextChanged="OnCellSizeChanged"/>
                 <Separator/>
+                <TextBlock Text="어깨너비(m):" VerticalAlignment="Center" Margin="4,0"/>
+                <TextBox x:Name="ShoulderWidthBox" Width="50" Text="0.40" VerticalAlignment="Center"
+                         TextChanged="OnBodyProfileChanged"/>
+                <TextBlock Text="몸통둘레(m):" VerticalAlignment="Center" Margin="4,0"/>
+                <TextBox x:Name="TorsoCircumferenceBox" Width="50" Text="0.95" VerticalAlignment="Center"
+                         TextChanged="OnBodyProfileChanged"/>
+                <Separator/>
                 <TextBlock Text="기준거리(m):" VerticalAlignment="Center" Margin="4,0"/>
                 <TextBox x:Name="ThresholdBox" Width="55" VerticalAlignment="Center"
                          TextChanged="OnThresholdChanged" LostFocus="OnThresholdLostFocus" KeyDown="OnThresholdKeyDown"

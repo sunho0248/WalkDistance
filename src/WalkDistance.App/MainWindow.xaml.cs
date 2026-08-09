@@ -26,12 +26,15 @@ public partial class MainWindow : Window
     };
     private WorldPoint _wallGeometryOrigin;
     private readonly ExitLineEditor _exitEditor = new();
-    private WalkabilityGrid? _grid;
-    private DistanceMapResult? _result;
+    private WalkabilityGrid? _mapGrid;
+    private DistanceMapResult? _mapResult;
+    private WalkabilityGrid? _bodyGrid;
+    private DistanceMapResult? _bodyResult;
     private string? _dxfPath;
     private string? _projectPath;
     private string? _startupProjectPath;
     private double _metersPerDrawingUnit = 1;
+    private BodyProfile _bodyProfile = BodyProfile.KoreanAdult;
     private bool _addExitMode;
     private bool _isPanning;
     private Point _panStart;
@@ -125,6 +128,11 @@ public partial class MainWindow : Window
         {
             return false;
         }
+        BodyProfile? profile = ParseBodyProfile();
+        if (profile is null)
+        {
+            return false;
+        }
 
         string? path = saveAs ? null : _projectPath;
         if (path is null)
@@ -141,19 +149,27 @@ public partial class MainWindow : Window
 
         try
         {
-            var analysis = _grid is not null && _result is not null && _grid.CellSize == cellSize.Value
-                ? DistanceMapCache.Create(_grid, _result, _queryPoint, _queryDistance,
-                    _farthestPathPoints, _queryPathPoints)
+            var analysis = _mapGrid is not null && _mapResult is not null &&
+                           _mapGrid.CellSize == cellSize.Value && _mapGrid.ClearanceRadius == 0
+                ? DistanceMapCache.Create(_mapGrid, _mapResult, null, null, null, null)
+                : null;
+            var bodyAnalysis = _bodyGrid is not null && _bodyResult is not null &&
+                               _bodyGrid.CellSize == cellSize.Value && _bodyProfile == profile &&
+                               _bodyGrid.ClearanceRadius == profile.ClearanceRadius
+                ? DistanceMapCache.Create(_bodyGrid, _bodyResult, _queryPoint, _queryDistance,
+                    _farthestPathPoints, _queryPathPoints, profile)
                 : null;
             ProjectFile.Save(path, new ProjectData(
-                Version: 5,
+                Version: 7,
                 CellSize: cellSize.Value,
                 MetersPerDrawingUnit: _metersPerDrawingUnit,
                 Walls: _walls.ToList(),
                 Exits: [],
                 DxfPath: _dxfPath,
                 ExitPaths: _exitEditor.Paths.Select(exitPath => exitPath.ToList()).ToList(),
-                Analysis: analysis));
+                Analysis: analysis,
+                BodyProfile: profile,
+                BodyAnalysis: bodyAnalysis));
             _projectPath = path;
             SetDirty(false);
             StatusText.Text = $"프로젝트 저장됨: {System.IO.Path.GetFileName(path)} (DXF 없이 다시 열 수 있음)";
@@ -191,19 +207,37 @@ public partial class MainWindow : Window
             _dxfPath = data.DxfPath;
             _projectPath = path;
             _metersPerDrawingUnit = data.MetersPerDrawingUnit;
+            _bodyProfile = data.BodyProfile!;
             CellSizeBox.Text = data.CellSize.ToString(CultureInfo.InvariantCulture);
+            ShoulderWidthBox.Text = _bodyProfile.ShoulderWidth.ToString(CultureInfo.InvariantCulture);
+            TorsoCircumferenceBox.Text = _bodyProfile.TorsoCircumference.ToString(CultureInfo.InvariantCulture);
             ResetAnalysis(clearExits: true);
             _exitEditor.LoadPaths(data.ExitPaths!);
             if (data.Analysis is { } cache)
             {
-                _grid = WalkabilityGrid.Build(_walls, data.CellSize);
-                var restored = cache.Restore(_grid);
-                _result = restored.Result;
-                _queryPoint = restored.QueryPoint;
-                _queryDistance = restored.QueryDistance;
-                _farthestPathPoints = restored.FarthestPath;
-                _queryPathPoints = restored.QueryPath;
-                RefreshAnalysisCaches();
+                var mapGrid = WalkabilityGrid.Build(_walls, data.CellSize);
+                if (cache.IsCompatibleWith(mapGrid))
+                {
+                    _mapGrid = mapGrid;
+                    _mapResult = cache.Restore(mapGrid).Result;
+                    RefreshMapCaches();
+
+                    if (data.BodyAnalysis is { } bodyCache)
+                    {
+                        var bodyGrid = WalkabilityGrid.Build(
+                            _walls, data.CellSize, clearanceRadius: _bodyProfile.ClearanceRadius);
+                        if (bodyCache.IsCompatibleWith(bodyGrid, _bodyProfile))
+                        {
+                            _bodyGrid = bodyGrid;
+                            var restored = bodyCache.Restore(bodyGrid);
+                            _bodyResult = restored.Result;
+                            _queryPoint = restored.QueryPoint;
+                            _queryDistance = restored.QueryDistance;
+                            _farthestPathPoints = restored.FarthestPath;
+                            _queryPathPoints = restored.QueryPath;
+                        }
+                    }
+                }
             }
             SetDirty(false);
             StatusText.Text = $"프로젝트 v{data.Version} 불러옴: {System.IO.Path.GetFileName(path)} · 출구 {_exitEditor.Segments.Count}개";
@@ -388,14 +422,14 @@ public partial class MainWindow : Window
             StatusText.Text = "출구 선택을 해제했습니다.";
         }
 
-        if (_grid is null || _result is null)
+        if (_bodyGrid is null || _bodyResult is null)
         {
             Redraw();
             return;
         }
 
         _queryPoint = worldPoint;
-        if (!_grid.Contains(worldPoint))
+        if (!_bodyGrid.Contains(worldPoint))
         {
             _queryDistance = null;
             _queryPathPoints = null;
@@ -403,18 +437,18 @@ public partial class MainWindow : Window
             Redraw();
             return;
         }
-        var queryCell = _grid.WorldToCell(worldPoint);
-        if (!_grid.IsWalkable(queryCell))
+        var queryCell = _bodyGrid.WorldToCell(worldPoint);
+        if (!_bodyGrid.IsWalkable(queryCell))
         {
             _queryDistance = null;
             _queryPathPoints = null;
-            StatusText.Text = _grid.IsBlocked(queryCell.Col, queryCell.Row)
+            StatusText.Text = _bodyGrid.IsBlocked(queryCell.Col, queryCell.Row)
                 ? "선택 지점은 벽 위입니다."
                 : "선택 지점은 건물 외부입니다.";
             Redraw();
             return;
         }
-        var queryPath = DistanceMapCalculator.FindPath(_grid, _result, worldPoint);
+        var queryPath = DistanceMapCalculator.FindPath(_bodyGrid, _bodyResult, worldPoint);
         _queryPathPoints = queryPath?.Points;
         _queryDistance = queryPath?.Distance;
         StatusText.Text = _queryDistance is { } distance
@@ -668,7 +702,20 @@ public partial class MainWindow : Window
 
     private void OnCellSizeChanged(object sender, TextChangedEventArgs e)
     {
-        if (_walls.Count > 0) SetDirty(true);
+        if (_walls.Count > 0) InvalidateAnalysis();
+    }
+
+    private void OnBodyProfileChanged(object sender, TextChangedEventArgs e)
+    {
+        if (!TryParseBodyProfile(out var profile) || profile == _bodyProfile)
+        {
+            return;
+        }
+
+        _bodyProfile = profile;
+        InvalidateBodyAnalysis();
+        StatusText.Text = $"신체 여유반경 {_bodyProfile.ClearanceRadius:F2} m로 분석을 다시 계산하세요.";
+        Redraw();
     }
 
     private void ValidateThresholdInput()
@@ -758,6 +805,42 @@ public partial class MainWindow : Window
         return null;
     }
 
+    private BodyProfile? ParseBodyProfile()
+    {
+        if (TryParseBodyProfile(out var profile))
+        {
+            return profile;
+        }
+
+        MessageBox.Show(this, "어깨너비와 몸통둘레는 0보다 큰 숫자여야 합니다.", "알림");
+        return null;
+    }
+
+    private bool TryParseBodyProfile(out BodyProfile profile)
+    {
+        profile = default!;
+        if (ShoulderWidthBox is null || TorsoCircumferenceBox is null)
+        {
+            return false;
+        }
+
+        bool shoulderParsed = double.TryParse(ShoulderWidthBox.Text, NumberStyles.Float,
+                                  CultureInfo.CurrentCulture, out double shoulderWidth) ||
+                              double.TryParse(ShoulderWidthBox.Text, NumberStyles.Float,
+                                  CultureInfo.InvariantCulture, out shoulderWidth);
+        bool torsoParsed = double.TryParse(TorsoCircumferenceBox.Text, NumberStyles.Float,
+                               CultureInfo.CurrentCulture, out double torsoCircumference) ||
+                           double.TryParse(TorsoCircumferenceBox.Text, NumberStyles.Float,
+                               CultureInfo.InvariantCulture, out torsoCircumference);
+        if (!shoulderParsed || !torsoParsed)
+        {
+            return false;
+        }
+
+        profile = new BodyProfile(shoulderWidth, torsoCircumference);
+        return profile.IsValid;
+    }
+
     private bool TryParseThreshold(out double? parsed)
     {
         parsed = null;
@@ -808,6 +891,12 @@ public partial class MainWindow : Window
             Redraw();
             return;
         }
+        BodyProfile? profile = ParseBodyProfile();
+        if (profile is null)
+        {
+            return;
+        }
+        _bodyProfile = profile;
 
         var walls = _walls.ToArray();
         var exitPaths = _exitEditor.Paths.Select(path => path.ToArray()).ToArray();
@@ -819,16 +908,21 @@ public partial class MainWindow : Window
             CalculationProgress.Value = 1;
             StatusText.Text = "1/4 · 격자 생성 중...";
             await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
-            _grid = await Task.Run(() => WalkabilityGrid.Build(walls, cellSize.Value));
-            _result = null;
-            ClearAnalysisCaches();
+            var grids = await Task.Run(() => (
+                Map: WalkabilityGrid.Build(walls, cellSize.Value),
+                Body: WalkabilityGrid.Build(walls, cellSize.Value, clearanceRadius: profile.ClearanceRadius)));
+            _mapGrid = grids.Map;
+            _bodyGrid = grids.Body;
+            _mapResult = null;
+            _bodyResult = null;
+            ClearMapCaches();
             _farthestPathPoints = null;
             _queryPoint = null;
             _queryDistance = null;
             _queryPathPoints = null;
-            if (_grid.InteriorCellCount == 0)
+            if (_mapGrid.InteriorCellCount == 0)
             {
-                _grid = null;
+                InvalidateAnalysis();
                 MessageBox.Show(this,
                     "닫힌 건물 외곽선을 찾을 수 없습니다. 벽 선을 연결해 닫힌 공간을 만든 뒤 다시 계산하세요.",
                     "닫힌 외곽선 필요",
@@ -841,16 +935,20 @@ public partial class MainWindow : Window
             CalculationProgress.Value = 2;
             StatusText.Text = "2/4 · 출구 소스 생성 중...";
             await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
-            var grid = _grid;
-            var sources = await Task.Run(() => exitPaths
-                .SelectMany((path, exitGroupId) => path
+            var mapGrid = _mapGrid;
+            var bodyGrid = _bodyGrid;
+            var sourceSets = await Task.Run(() => (
+                Map: exitPaths.SelectMany((path, exitGroupId) => path
                     .Zip(path.Skip(1), (start, end) => new Segment(start, end))
-                    .SelectMany(exit =>
-                        grid.WalkableSourcesNearSegment(exit, grid.CellSize, exitGroupId)))
-                .ToList());
-            if (sources.Count == 0)
+                    .SelectMany(exit => mapGrid.WalkableSourcesNearSegment(exit, mapGrid.CellSize, exitGroupId)))
+                    .ToList(),
+                Body: exitPaths.SelectMany((path, exitGroupId) => path
+                    .Zip(path.Skip(1), (start, end) => new Segment(start, end))
+                    .SelectMany(exit => bodyGrid.WalkableSourcesNearSegment(exit, bodyGrid.CellSize, exitGroupId)))
+                    .ToList()));
+            if (sourceSets.Map.Count == 0)
             {
-                _grid = null;
+                InvalidateAnalysis();
                 MessageBox.Show(this, "건물 내부와 연결되는 사용 가능한 출구가 없습니다. 출구 위치를 확인하세요.", "알림");
                 StatusText.Text = "계산 중단: 건물 내부와 연결되는 사용 가능한 출구가 없습니다.";
                 Redraw();
@@ -860,28 +958,31 @@ public partial class MainWindow : Window
             CalculationProgress.Value = 3;
             StatusText.Text = "3/4 · 보행거리 계산 중...";
             await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
-            _result = await Task.Run(() => DistanceMapCalculator.Compute(grid, sources));
+            var results = await Task.Run(() => (
+                Map: DistanceMapCalculator.Compute(mapGrid, sourceSets.Map),
+                Body: DistanceMapCalculator.Compute(bodyGrid, sourceSets.Body)));
+            _mapResult = results.Map;
+            _bodyResult = results.Body;
 
             CalculationProgress.Value = 4;
             StatusText.Text = "4/4 · 결과 렌더링 중...";
             await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
-            var result = _result;
             var artifacts = await Task.Run(() =>
             {
-                var normalContours = DistanceContourGenerator.Generate(grid, result.Distances);
+                var normalContours = DistanceContourGenerator.Generate(mapGrid, results.Map.Distances);
                 var normalContourComponents = DistanceContourAssembler.Assemble(
                     normalContours.Where(contour => contour.Level % 10 == 0).ToList(),
-                    Math.Max(grid.CellSize * 1e-6, 1e-9));
+                    Math.Max(mapGrid.CellSize * 1e-6, 1e-9));
                 var thresholdContours = threshold is { } limit
-                    ? DistanceContourGenerator.GenerateThreshold(grid, result.Distances, limit)
+                    ? DistanceContourGenerator.GenerateThreshold(mapGrid, results.Map.Distances, limit)
                     : [];
                 var heatmapBitmap = HeatmapRenderer.Render(
-                    grid, result.Distances, result.MaxDistance, threshold);
-                var farthestPathPoints = result.FarthestCell is { } farthest
+                    mapGrid, results.Map.Distances, results.Map.MaxDistance, threshold);
+                var farthestPathPoints = results.Body.FarthestCell is { } farthest
                     ? DistanceMapCalculator.FindPath(
-                        grid,
-                        result,
-                        grid.CellCenter(farthest.Col, farthest.Row))?.Points
+                        bodyGrid,
+                        results.Body,
+                        bodyGrid.CellCenter(farthest.Col, farthest.Row))?.Points
                     : null;
                 return (normalContours, normalContourComponents, thresholdContours,
                     heatmapBitmap, farthestPathPoints);
@@ -895,13 +996,13 @@ public partial class MainWindow : Window
             _queryPoint = null;
             _queryDistance = null;
             _queryPathPoints = null;
-            StatusText.Text = _result.FarthestCell is null
-                ? "도달 가능한 보행 영역이 없습니다."
-                : $"최대 보행거리: {_result.MaxDistance:F2} m · 계산 후 도면을 클릭하면 해당 최단경로를 표시합니다.";
+            StatusText.Text = _bodyResult.FarthestCell is null
+                ? "신체 여유 공간에서 도달 가능한 보행 영역이 없습니다."
+                : $"최대 보행거리: {_bodyResult.MaxDistance:F2} m · 계산 후 도면을 클릭하면 해당 최단경로를 표시합니다.";
 
-            if (_result.UnreachableCellCount > 0)
+            if (_bodyResult.UnreachableCellCount > 0)
             {
-                StatusText.Text += $" · 도달 불가 {_result.UnreachableCellCount:N0}셀 제외";
+                StatusText.Text += $" · 도달 불가 {_bodyResult.UnreachableCellCount:N0}셀 제외";
             }
 
             SetDirty(true);
@@ -909,13 +1010,7 @@ public partial class MainWindow : Window
         }
         catch (GridSizeLimitExceededException ex)
         {
-            _grid = null;
-            _result = null;
-            ClearAnalysisCaches();
-            _farthestPathPoints = null;
-            _queryPoint = null;
-            _queryDistance = null;
-            _queryPathPoints = null;
+            InvalidateAnalysis();
             MessageBox.Show(this,
                 $"격자가 너무 큽니다 ({ex.RequestedCellCount:N0}셀 / 한도 {ex.MaxCellCount:N0}셀). 셀 크기를 키워 다시 계산하세요.",
                 "격자 크기 초과",
@@ -953,38 +1048,46 @@ public partial class MainWindow : Window
 
     private void InvalidateAnalysis()
     {
-        _grid = null;
-        _result = null;
+        _mapGrid = null;
+        _mapResult = null;
+        ClearMapCaches();
+        InvalidateBodyAnalysis(markDirty: false);
+        if (_walls.Count > 0) SetDirty(true);
+    }
+
+    private void InvalidateBodyAnalysis(bool markDirty = true)
+    {
+        _bodyGrid = null;
+        _bodyResult = null;
         _queryPoint = null;
         _queryDistance = null;
         _farthestPathPoints = null;
         _queryPathPoints = null;
-        ClearAnalysisCaches();
-        if (_walls.Count > 0) SetDirty(true);
+        if (markDirty && _walls.Count > 0) SetDirty(true);
     }
 
-    private void RefreshAnalysisCaches()
+    private void RefreshMapCaches()
     {
-        if (_grid is null || _result is null)
+        if (_mapGrid is null || _mapResult is null)
             return;
-        _normalContours = DistanceContourGenerator.Generate(_grid, _result.Distances);
+        _normalContours = DistanceContourGenerator.Generate(_mapGrid, _mapResult.Distances);
         _normalContourComponents = DistanceContourAssembler.Assemble(
             _normalContours.Where(contour => contour.Level % 10 == 0).ToList(),
-            Math.Max(_grid.CellSize * 1e-6, 1e-9));
+            Math.Max(_mapGrid.CellSize * 1e-6, 1e-9));
         RefreshThresholdCaches();
     }
 
     private void RefreshThresholdCaches()
     {
-        if (_grid is null || _result is null)
+        if (_mapGrid is null || _mapResult is null)
             return;
         _thresholdContours = _threshold is { } threshold
-            ? DistanceContourGenerator.GenerateThreshold(_grid, _result.Distances, threshold)
+            ? DistanceContourGenerator.GenerateThreshold(_mapGrid, _mapResult.Distances, threshold)
             : [];
-        _heatmapBitmap = HeatmapRenderer.Render(_grid, _result.Distances, _result.MaxDistance, _threshold);
+        _heatmapBitmap = HeatmapRenderer.Render(_mapGrid, _mapResult.Distances, _mapResult.MaxDistance, _threshold);
     }
 
-    private void ClearAnalysisCaches()
+    private void ClearMapCaches()
     {
         _normalContours = [];
         _normalContourComponents = [];
@@ -1075,9 +1178,9 @@ public partial class MainWindow : Window
 
         bool showMap = MapOverlayToggle.IsChecked == true;
         bool showPaths = PathOverlayToggle.IsChecked == true;
-        if (showMap && _grid is not null && _heatmapBitmap is not null)
+        if (showMap && _mapGrid is not null && _heatmapBitmap is not null)
         {
-            DrawHeatmap(_grid, _heatmapBitmap);
+            DrawHeatmap(_mapGrid, _heatmapBitmap);
             DrawContours(_normalContours, _thresholdContours, _normalContourComponents);
         }
 
@@ -1148,13 +1251,13 @@ public partial class MainWindow : Window
         {
             AddPath(_farthestPathPoints, Brushes.OrangeRed, 2.5);
             AddPath(_queryPathPoints, Brushes.DeepSkyBlue, 2.5);
-            var farthestLabelPosition = AddPathLabel(_farthestPathPoints, _result?.MaxDistance, Brushes.OrangeRed);
+            var farthestLabelPosition = AddPathLabel(_farthestPathPoints, _bodyResult?.MaxDistance, Brushes.OrangeRed);
             AddPathLabel(_queryPathPoints, _queryDistance, Brushes.DeepSkyBlue, farthestLabelPosition);
 
-            if (_grid is not null && _result?.FarthestCell is { } farthest)
+            if (_bodyGrid is not null && _bodyResult?.FarthestCell is { } farthest)
             {
-                var point = _transform.ToScreen(_grid.CellCenter(farthest.Col, farthest.Row));
-                AddMarker(point, 8, Brushes.Red, $"최대 보행거리 지점 ({_result.MaxDistance:F2} m)");
+                AddBodyClearanceOutline(_bodyGrid.CellCenter(farthest.Col, farthest.Row), Brushes.OrangeRed,
+                    $"최대 보행거리 지점 ({_bodyResult.MaxDistance:F2} m)");
             }
 
             if (_queryPoint is { } queryPoint)
@@ -1162,7 +1265,7 @@ public partial class MainWindow : Window
                 string tooltip = _queryDistance is { } distance
                     ? $"선택 지점 ({distance:F2} m)"
                     : "도달 불가능 또는 벽";
-                AddMarker(_transform.ToScreen(queryPoint), 5,
+                AddBodyClearanceOutline(queryPoint,
                     _queryDistance is null ? Brushes.Gray : Brushes.DeepSkyBlue, tooltip);
             }
         }
@@ -1307,6 +1410,29 @@ public partial class MainWindow : Window
         Canvas.SetLeft(ellipse, center.X - radius);
         Canvas.SetTop(ellipse, center.Y - radius);
         DrawingCanvas.Children.Add(ellipse);
+    }
+
+    private void AddBodyClearanceOutline(WorldPoint point, Brush brush, string tooltip)
+    {
+        if (_transform is null)
+        {
+            return;
+        }
+
+        var center = _transform.ToScreen(point);
+        double radius = _bodyProfile.ClearanceRadius * _transform.Scale;
+        var outline = new Ellipse
+        {
+            Width = radius * 2,
+            Height = radius * 2,
+            Fill = Brushes.Transparent,
+            Stroke = brush,
+            StrokeThickness = 2,
+            ToolTip = tooltip,
+        };
+        Canvas.SetLeft(outline, center.X - radius);
+        Canvas.SetTop(outline, center.Y - radius);
+        DrawingCanvas.Children.Add(outline);
     }
 
     private void DrawZoomWindow()

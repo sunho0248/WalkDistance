@@ -5,6 +5,86 @@ namespace WalkDistance.Core.Tests;
 public class WalkabilityGridTests
 {
     [Fact]
+    public void KoreanAdultProfile_UsesBothDimensionsForAConservativeClearanceRadius()
+    {
+        var profile = BodyProfile.KoreanAdult;
+
+        Assert.Equal(0.40, profile.ShoulderWidth);
+        Assert.Equal(0.95, profile.TorsoCircumference);
+        Assert.Equal(0.20, profile.ClearanceRadius, precision: 10);
+    }
+
+    [Fact]
+    public void NarrowCorridor_IsPresentInTheGeometricGridButUnavailableToTheBodyGrid()
+    {
+        var walls = Rectangle(0, 0, 4, 4);
+        walls.Add(new Segment(new WorldPoint(2, 0), new WorldPoint(2, 1.8)));
+        walls.Add(new Segment(new WorldPoint(2, 2.1), new WorldPoint(2, 4)));
+
+        var geometricGrid = WalkabilityGrid.Build(walls, cellSize: 0.05, marginCells: 2);
+        var bodyGrid = WalkabilityGrid.Build(walls, cellSize: 0.05, marginCells: 2,
+            clearanceRadius: BodyProfile.KoreanAdult.ClearanceRadius);
+
+        var gap = geometricGrid.WorldToCell(new WorldPoint(2, 1.95));
+        Assert.True(geometricGrid.IsWalkable(gap.Col, gap.Row));
+        Assert.False(bodyGrid.IsWalkable(gap.Col, gap.Row));
+
+        var exit = new Segment(new WorldPoint(0, 1), new WorldPoint(0, 3));
+        var geometricResult = DistanceMapCalculator.Compute(
+            geometricGrid, geometricGrid.WalkableSourcesNearSegment(exit, geometricGrid.CellSize));
+        var bodyResult = DistanceMapCalculator.Compute(
+            bodyGrid, bodyGrid.WalkableSourcesNearSegment(exit, bodyGrid.CellSize));
+        var target = new WorldPoint(3, 2);
+
+        Assert.NotNull(DistanceMapCalculator.FindPath(geometricGrid, geometricResult, target));
+        Assert.Null(DistanceMapCalculator.FindPath(bodyGrid, bodyResult, target));
+    }
+
+    [Fact]
+    public void BodyProfileChanges_DoNotChangeGeometricDistances()
+    {
+        var walls = Rectangle(0, 0, 4, 4);
+        var exit = new Segment(new WorldPoint(1, 0), new WorldPoint(3, 0));
+        var geometricGrid = WalkabilityGrid.Build(walls, cellSize: 0.1, marginCells: 2);
+        var sources = geometricGrid.WalkableSourcesNearSegment(exit, geometricGrid.CellSize);
+        var beforeBodyEdit = DistanceMapCalculator.Compute(geometricGrid, sources);
+
+        var narrowBodyGrid = WalkabilityGrid.Build(walls, cellSize: 0.1, marginCells: 2,
+            clearanceRadius: new BodyProfile(0.4, 0.95).ClearanceRadius);
+        var wideBodyGrid = WalkabilityGrid.Build(walls, cellSize: 0.1, marginCells: 2,
+            clearanceRadius: new BodyProfile(0.8, 1.5).ClearanceRadius);
+        var afterBodyEdit = DistanceMapCalculator.Compute(geometricGrid, sources);
+
+        Assert.NotEqual(narrowBodyGrid.ClearanceRadius, wideBodyGrid.ClearanceRadius);
+        Assert.Equal(beforeBodyEdit.Distances.Cast<double>(), afterBodyEdit.Distances.Cast<double>());
+    }
+
+    [Fact]
+    public void WalkableSourcesNearSegment_RejectsExitNarrowerThanTheConfiguredBody()
+    {
+        var grid = WalkabilityGrid.Build(Rectangle(0, 0, 4, 4), cellSize: 0.05, marginCells: 2,
+            clearanceRadius: BodyProfile.KoreanAdult.ClearanceRadius);
+        var narrowExit = new Segment(new WorldPoint(1.8, 0), new WorldPoint(2.1, 0));
+        var wideExit = new Segment(new WorldPoint(1, 0), new WorldPoint(3, 0));
+
+        Assert.Empty(grid.WalkableSourcesNearSegment(narrowExit, grid.CellSize));
+        Assert.NotEmpty(grid.WalkableSourcesNearSegment(wideExit, grid.CellSize));
+    }
+
+    [Fact]
+    public void WalkableSourcesNearSegment_PreservesLegacyPointExitWithClearance()
+    {
+        var grid = WalkabilityGrid.Build(Rectangle(0, 0, 4, 4), cellSize: 0.05, marginCells: 2,
+            clearanceRadius: BodyProfile.KoreanAdult.ClearanceRadius);
+        var pointExit = new Segment(new WorldPoint(2, 2), new WorldPoint(2, 2));
+
+        var sources = grid.WalkableSourcesNearSegment(pointExit, grid.CellSize);
+
+        Assert.NotEmpty(sources);
+        Assert.All(sources, source => Assert.True(grid.IsWalkable(source.Col, source.Row)));
+    }
+
+    [Fact]
     public void Build_ClassifiesOnlyClosedInteriorAsWalkable()
     {
         var grid = WalkabilityGrid.Build(Rectangle(0, 0, 10, 10), cellSize: 0.5, marginCells: 2);

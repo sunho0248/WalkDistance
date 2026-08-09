@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using WalkDistance.Core;
 
 namespace WalkDistance.Core.Tests;
@@ -10,30 +11,84 @@ public sealed class ProjectFileTests : IDisposable
     public ProjectFileTests() => Directory.CreateDirectory(_directory);
 
     [Fact]
-    public void Version5_RoundTripsCachedAnalysis()
+    public void Version5_DropsMalformedProfilelessCache()
     {
         var walls = Rectangle(0, 0, 10, 10);
-        var grid = WalkabilityGrid.Build(walls, 1, marginCells: 0);
+        var path = Path.Combine(_directory, "version5.walkdistance");
+        File.WriteAllText(path, JsonSerializer.Serialize(new
+        {
+            Version = 5,
+            CellSize = 1.0,
+            MetersPerDrawingUnit = 1.0,
+            Walls = walls,
+            Exits = Array.Empty<Segment>(),
+            Analysis = new { },
+        }));
+
+        var project = ProjectFile.Load(path);
+
+        Assert.Equal(7, project.Version);
+        Assert.Equal(BodyProfile.KoreanAdult, project.BodyProfile);
+        Assert.Null(project.Analysis);
+    }
+
+    [Fact]
+    public void Version6_DropsBodyFilteredCacheInsteadOfUsingItAsTheMap()
+    {
+        var profile = new BodyProfile(0.5, 1.1);
+        var walls = Rectangle(0, 0, 10, 10);
+        var grid = WalkabilityGrid.Build(walls, 1, marginCells: 0, clearanceRadius: profile.ClearanceRadius);
         var source = grid.NearestWalkableCell(new WorldPoint(5, 5))!.Value;
-        var result = DistanceMapCalculator.Compute(grid, new[] { source });
-        var cache = DistanceMapCache.Create(grid, result,
+        var result = DistanceMapCalculator.Compute(grid, [source]);
+        var cache = DistanceMapCache.Create(grid, result, null, null, null, null, profile);
+        var path = Path.Combine(_directory, "profile.walkdistance");
+
+        File.WriteAllText(path, JsonSerializer.Serialize(new ProjectData(
+            6, 1, 1, walls, [], Analysis: cache, BodyProfile: profile), new JsonSerializerOptions
+        {
+            NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
+        }));
+        var project = ProjectFile.Load(path);
+
+        Assert.Equal(7, project.Version);
+        Assert.Equal(profile, project.BodyProfile);
+        Assert.Null(project.Analysis);
+        Assert.Null(project.BodyAnalysis);
+    }
+
+    [Fact]
+    public void Version7_RoundTripsSeparateGeometricAndBodyCaches()
+    {
+        var profile = BodyProfile.KoreanAdult;
+        var walls = Rectangle(0, 0, 10, 10);
+        var mapGrid = WalkabilityGrid.Build(walls, 1, marginCells: 0);
+        var bodyGrid = WalkabilityGrid.Build(walls, 1, marginCells: 0, clearanceRadius: profile.ClearanceRadius);
+        var mapSource = mapGrid.NearestWalkableCell(new WorldPoint(5, 5))!.Value;
+        var bodySource = bodyGrid.NearestWalkableCell(new WorldPoint(5, 5))!.Value;
+        var mapResult = DistanceMapCalculator.Compute(mapGrid, new[] { mapSource });
+        var bodyResult = DistanceMapCalculator.Compute(bodyGrid, new[] { bodySource });
+        var mapCache = DistanceMapCache.Create(mapGrid, mapResult, null, null, null, null);
+        var bodyCache = DistanceMapCache.Create(bodyGrid, bodyResult,
             new WorldPoint(6, 6), 2.5,
             [new WorldPoint(5, 5), new WorldPoint(6, 6)],
-            [new WorldPoint(5, 5), new WorldPoint(7, 7)]);
+            [new WorldPoint(5, 5), new WorldPoint(7, 7)], profile);
         var path = Path.Combine(_directory, "cached.walkdistance");
-        var expected = new ProjectData(5, 1, 1, walls, [], Analysis: cache);
+        var expected = new ProjectData(7, 1, 1, walls, [], Analysis: mapCache,
+            BodyProfile: profile, BodyAnalysis: bodyCache);
 
         ProjectFile.Save(path, expected);
         var actual = ProjectFile.Load(path);
-        var restored = actual.Analysis!.Restore(grid);
+        var restoredMap = actual.Analysis!.Restore(mapGrid);
+        var restoredBody = actual.BodyAnalysis!.Restore(bodyGrid);
 
-        Assert.Equal(5, actual.Version);
-        Assert.Equal(result.MaxDistance, restored.Result.MaxDistance);
-        Assert.Equal(result.FarthestCell, restored.Result.FarthestCell);
-        Assert.Equal(result.Distances[source.Row, source.Col], restored.Result.Distances[source.Row, source.Col]);
-        Assert.Equal(cache.QueryPoint, actual.Analysis.QueryPoint);
-        Assert.Equal(cache.QueryPath, actual.Analysis.QueryPath);
-        Assert.Equal(cache.FarthestPath, actual.Analysis.FarthestPath);
+        Assert.Equal(7, actual.Version);
+        Assert.True(actual.Analysis.IsCompatibleWith(mapGrid));
+        Assert.True(actual.BodyAnalysis.IsCompatibleWith(bodyGrid, profile));
+        Assert.Equal(mapResult.MaxDistance, restoredMap.Result.MaxDistance);
+        Assert.Equal(bodyResult.MaxDistance, restoredBody.Result.MaxDistance);
+        Assert.Equal(bodyCache.QueryPoint, actual.BodyAnalysis.QueryPoint);
+        Assert.Equal(bodyCache.QueryPath, actual.BodyAnalysis.QueryPath);
+        Assert.Equal(bodyCache.FarthestPath, actual.BodyAnalysis.FarthestPath);
     }
 
     [Fact]
@@ -73,7 +128,7 @@ public sealed class ProjectFileTests : IDisposable
         File.Delete(dxfPath);
         var actual = ProjectFile.Load(projectPath);
 
-        Assert.Equal(5, actual.Version);
+        Assert.Equal(7, actual.Version);
         Assert.Equal(expected.Walls, actual.Walls);
         Assert.Equal(expected.Exits, actual.Exits);
         Assert.Equal(exitPath, Assert.Single(actual.ExitPaths!));
@@ -99,7 +154,7 @@ public sealed class ProjectFileTests : IDisposable
 
         var project = ProjectFile.Load(projectPath);
 
-        Assert.Equal(5, project.Version);
+        Assert.Equal(7, project.Version);
         Assert.Equal(exit, Assert.Single(project.Exits));
         Assert.Equal(new[] { exit.Start, exit.End }, Assert.Single(project.ExitPaths!));
     }
@@ -131,7 +186,7 @@ public sealed class ProjectFileTests : IDisposable
         var legacyResult = DistanceMapCalculator.Compute(grid, new[] { legacySource });
         var migratedResult = DistanceMapCalculator.Compute(grid, migratedSources);
 
-        Assert.Equal(5, project.Version);
+        Assert.Equal(7, project.Version);
         Assert.Equal(new Segment(pointExit, pointExit), migratedExit);
         Assert.Equal(new[] { pointExit, pointExit }, Assert.Single(project.ExitPaths!));
         Assert.Equal(legacySource, Assert.Single(migratedSources));
@@ -165,7 +220,8 @@ public sealed class ProjectFileTests : IDisposable
 
         var project = ProjectFile.Load(projectPath);
 
-        Assert.Equal(5, project.Version);
+        Assert.Equal(7, project.Version);
+        Assert.Equal(BodyProfile.KoreanAdult, project.BodyProfile);
         Assert.Single(project.Walls);
         Assert.Equal(new WorldPoint(4, 0), project.Walls[0].End);
         Assert.Equal(new Segment(new WorldPoint(1, 1), new WorldPoint(1, 1)), project.Exits.Single());
@@ -189,7 +245,7 @@ public sealed class ProjectFileTests : IDisposable
     public void UnsupportedVersion_IsRejected()
     {
         var projectPath = Path.Combine(_directory, "future.json");
-        File.WriteAllText(projectPath, "{\"Version\":6}");
+        File.WriteAllText(projectPath, "{\"Version\":8}");
 
         Assert.Throws<InvalidDataException>(() => ProjectFile.Load(projectPath));
     }
