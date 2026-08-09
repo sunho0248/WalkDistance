@@ -134,8 +134,9 @@ public static class PackageIntegrity
             await using (var target = File.Create(partial))
                 await source.CopyToAsync(target, cancellationToken).ConfigureAwait(false);
 
-            await using var file = File.OpenRead(partial);
-            byte[] actualHash = await SHA256.HashDataAsync(file, cancellationToken).ConfigureAwait(false);
+            byte[] actualHash;
+            await using (var file = File.OpenRead(partial))
+                actualHash = await SHA256.HashDataAsync(file, cancellationToken).ConfigureAwait(false);
             if (!CryptographicOperations.FixedTimeEquals(actualHash, expectedHash))
                 throw new InvalidDataException("다운로드한 파일의 SHA-256 검증에 실패했습니다.");
 
