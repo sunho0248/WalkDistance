@@ -41,6 +41,21 @@ public sealed class ReleaseUpdateTests : IDisposable
     }
 
     [Fact]
+    public async Task DownloadVerifiedAsync_ClosesVerifiedFileBeforePublishing()
+    {
+        byte[] content = "WalkDistance update"u8.ToArray();
+        string destination = Path.Combine(_directory, "WalkDistance-win-x64.zip");
+        var asset = new GitHubAsset("package.zip", "https://example.test/package.zip",
+            "sha256:" + Convert.ToHexString(SHA256.HashData(content)));
+        using var client = new System.Net.Http.HttpClient(new BytesHandler(content));
+
+        await PackageIntegrity.DownloadVerifiedAsync(client, asset, destination);
+
+        Assert.Equal(content, await File.ReadAllBytesAsync(destination));
+        Assert.False(File.Exists(destination + ".download"));
+    }
+
+    [Fact]
     public void ExtractSafely_RejectsZipSlipAndMissingApplication()
     {
         string zip = Path.Combine(_directory, "unsafe.zip");
@@ -139,5 +154,15 @@ public sealed class ReleaseUpdateTests : IDisposable
     {
         if (Directory.Exists(_directory))
             Directory.Delete(_directory, recursive: true);
+    }
+
+    private sealed class BytesHandler(byte[] content) : System.Net.Http.HttpMessageHandler
+    {
+        protected override Task<System.Net.Http.HttpResponseMessage> SendAsync(
+            System.Net.Http.HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new System.Net.Http.ByteArrayContent(content),
+            });
     }
 }
