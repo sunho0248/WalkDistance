@@ -16,7 +16,7 @@ public static class GitHubReleaseClient
     public static HttpClient CreateClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("WalkDistance", "1.3.6"));
+        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("WalkDistance", "1.3.7"));
         client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return client;
     }

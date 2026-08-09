@@ -97,7 +97,7 @@ public partial class App : Application
 
     private static void StartUpdater(string tempDirectory, string packagePath)
     {
-        string installDirectory = AppContext.BaseDirectory;
+        string installDirectory = Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
         string helperPath = Path.Combine(tempDirectory, "updater", "WalkDistance.Updater.exe");
         if (!File.Exists(Path.Combine(installDirectory, "WalkDistance.Updater.exe")))
             throw new FileNotFoundException("업데이트 도우미를 찾을 수 없습니다.", installDirectory);
