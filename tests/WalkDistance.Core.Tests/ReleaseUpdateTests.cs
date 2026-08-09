@@ -11,13 +11,13 @@ public sealed class ReleaseUpdateTests : IDisposable
     public ReleaseUpdateTests() => Directory.CreateDirectory(_directory);
 
     [Theory]
-    [InlineData("v1.3.2", true)]
+    [InlineData("v1.3.3", true)]
     [InlineData("1.3.10", true)]
-    [InlineData("v1.3.1", false)]
+    [InlineData("v1.3.2", false)]
     [InlineData("v1.2.99", false)]
     [InlineData("not-a-version", false)]
     public void IsNewer_UsesNumericVersions(string tag, bool expected) =>
-        Assert.Equal(expected, ReleaseUpdate.IsNewer(tag, new Version(1, 3, 1, 0)));
+        Assert.Equal(expected, ReleaseUpdate.IsNewer(tag, new Version(1, 3, 2, 0)));
 
     [Fact]
     public void SelectWindowsX64Zip_RequiresOneExpectedAsset()

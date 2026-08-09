@@ -50,7 +50,7 @@ public partial class App : Application
             return;
         }
 
-        Version currentVersion = typeof(App).Assembly.GetName().Version ?? new Version(1, 3, 1);
+        Version currentVersion = typeof(App).Assembly.GetName().Version ?? new Version(1, 3, 2);
         GitHubAsset? asset = ReleaseUpdate.SelectWindowsX64Zip(release.Assets);
         if (!ReleaseUpdate.IsNewer(release.TagName, currentVersion) || asset is null ||
             !PackageIntegrity.TryParseSha256Digest(asset.Digest, out _))
