@@ -84,6 +84,37 @@ public class WalkabilityGridTests
     }
 
     [Fact]
+    public void WalkableSourcesNearSegment_MultiPointPathShorterThanBodyWidthHasNoSources()
+    {
+        var grid = WalkabilityGrid.Build(Rectangle(0, 0, 4, 4), cellSize: 0.05, marginCells: 2,
+            clearanceRadius: BodyProfile.KoreanAdult.ClearanceRadius);
+        WorldPoint[] exitPath = [new(1.0, 0), new(1.15, 0), new(1.30, 0)];
+
+        Assert.Empty(grid.WalkableSourcesNearSegment(exitPath, grid.CellSize));
+    }
+
+    [Fact]
+    public void WalkableSourcesNearSegment_MultiPointPathUsesWholePathEndClearance()
+    {
+        var grid = WalkabilityGrid.Build(Rectangle(0, 0, 4, 4), cellSize: 0.05, marginCells: 2,
+            clearanceRadius: BodyProfile.KoreanAdult.ClearanceRadius);
+        WorldPoint[] exitPath =
+        [
+            new(1.0, 0), new(1.15, 0), new(1.30, 0), new(1.45, 0), new(1.60, 0),
+        ];
+        var nearStart = grid.WorldToCell(new WorldPoint(1.05, 0.275));
+        var interiorJoint = grid.WorldToCell(new WorldPoint(1.30, 0.275));
+
+        var firstSegmentCandidates = grid.WalkableCellsNearSegment(
+            new Segment(exitPath[0], exitPath[1]), grid.CellSize + grid.ClearanceRadius);
+        var sources = grid.WalkableSourcesNearSegment(exitPath, grid.CellSize);
+
+        Assert.Contains(nearStart, firstSegmentCandidates);
+        Assert.DoesNotContain(sources, source => (source.Col, source.Row) == nearStart);
+        Assert.Contains(sources, source => (source.Col, source.Row) == interiorJoint);
+    }
+
+    [Fact]
     public void Build_ClassifiesOnlyClosedInteriorAsWalkable()
     {
         var grid = WalkabilityGrid.Build(Rectangle(0, 0, 10, 10), cellSize: 0.5, marginCells: 2);

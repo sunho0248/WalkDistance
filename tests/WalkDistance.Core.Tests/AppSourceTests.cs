@@ -563,14 +563,29 @@ public class AppSourceTests
     }
 
     [Fact]
-    public void MainWindow_CalculateUsesEveryConsecutiveExitPathSegment()
+    public void MainWindow_CalculateUsesWholeExitPathsForMapAndBodySources()
     {
         string method = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
 
         Assert.Contains("_exitEditor.Paths", method);
-        Assert.Contains(".Zip(path.Skip(1), (start, end) => new Segment(start, end))", method);
-        Assert.Contains("WalkableSourcesNearSegment(exit, mapGrid.CellSize, exitGroupId)", method);
-        Assert.Contains("WalkableSourcesNearSegment(exit, bodyGrid.CellSize, exitGroupId)", method);
+        Assert.Contains("WalkableSourcesNearSegment(path, mapGrid.CellSize, exitGroupId)", method);
+        Assert.Contains("WalkableSourcesNearSegment(path, bodyGrid.CellSize, exitGroupId)", method);
+        Assert.DoesNotContain(".Zip(path.Skip(1)", method);
+    }
+
+    [Fact]
+    public void MainWindow_BodyZeroExitStopsWithKoreanBodyClearanceGuidance()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
+        string diagnostic = Slice(method, "if (sourceSets.Body.Count == 0)", "CalculationProgress.Value = 3");
+
+        Assert.Contains("InvalidateAnalysis();", diagnostic);
+        Assert.Contains("인체 치수", diagnostic);
+        Assert.Contains("출구 전체 길이", diagnostic);
+        Assert.Contains("어깨너비", diagnostic);
+        Assert.Contains("계산 중단", diagnostic);
+        Assert.Contains("Redraw();", diagnostic);
+        Assert.Contains("return;", diagnostic);
     }
 
     [Fact]

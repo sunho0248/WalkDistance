@@ -968,13 +968,11 @@ public partial class MainWindow : Window
             var mapGrid = _mapGrid;
             var bodyGrid = _bodyGrid;
             var sourceSets = await Task.Run(() => (
-                Map: exitPaths.SelectMany((path, exitGroupId) => path
-                    .Zip(path.Skip(1), (start, end) => new Segment(start, end))
-                    .SelectMany(exit => mapGrid.WalkableSourcesNearSegment(exit, mapGrid.CellSize, exitGroupId)))
+                Map: exitPaths.SelectMany((path, exitGroupId) =>
+                    mapGrid.WalkableSourcesNearSegment(path, mapGrid.CellSize, exitGroupId))
                     .ToList(),
-                Body: exitPaths.SelectMany((path, exitGroupId) => path
-                    .Zip(path.Skip(1), (start, end) => new Segment(start, end))
-                    .SelectMany(exit => bodyGrid.WalkableSourcesNearSegment(exit, bodyGrid.CellSize, exitGroupId)))
+                Body: exitPaths.SelectMany((path, exitGroupId) =>
+                    bodyGrid.WalkableSourcesNearSegment(path, bodyGrid.CellSize, exitGroupId))
                     .ToList()));
             if (sourceSets.Map.Count == 0)
             {
@@ -983,6 +981,21 @@ public partial class MainWindow : Window
                 StatusText.Text = "계산 중단: 건물 내부와 연결되는 사용 가능한 출구가 없습니다.";
                 Redraw();
                 return;
+            }
+            if (sourceSets.Body.Count == 0)
+            {
+                if (clearanceRadius > 0)
+                {
+                    InvalidateAnalysis();
+                    MessageBox.Show(this,
+                        "인체 치수에 맞는 사용 가능한 출구가 없습니다. 출구 전체 길이가 어깨너비 이상인지, 벽과 충분한 여유가 있는지 확인하세요.",
+                        "인체 치수에 맞는 출구 없음",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                    StatusText.Text = "계산 중단: 인체 치수에 맞는 사용 가능한 출구가 없습니다.";
+                    Redraw();
+                    return;
+                }
             }
 
             CalculationProgress.Value = 3;

@@ -313,13 +313,70 @@ public sealed class WalkabilityGrid
     /// reach through a wall merely because it is near the exit.
     /// </summary>
     public IReadOnlyList<DistanceSource> WalkableSourcesNearSegment(
-        Segment segment,
+        IReadOnlyList<WorldPoint> path,
         double proximity,
         int? exitGroupId = null)
     {
+        if (path.Count == 0)
+        {
+            return [];
+        }
+        if (path.Count == 1)
+        {
+            return WalkableSourcesNearSegment(new Segment(path[0], path[0]), proximity, exitGroupId);
+        }
+        if (path.Count == 2)
+        {
+            return WalkableSourcesNearSegment(new Segment(path[0], path[1]), proximity, exitGroupId);
+        }
+
+        var lengths = new double[path.Count - 1];
+        for (int i = 0; i < lengths.Length; i++)
+        {
+            lengths[i] = Math.Sqrt(SquaredDistance(path[i], path[i + 1]));
+        }
+        double pathLength = lengths.Sum();
+        if (pathLength == 0)
+        {
+            return WalkableSourcesNearSegment(new Segment(path[0], path[0]), proximity, exitGroupId);
+        }
+
+        var sources = new List<DistanceSource>();
+        double distanceBeforeSegment = 0;
+        for (int i = 0; i < lengths.Length; i++)
+        {
+            if (lengths[i] > 0)
+            {
+                sources.AddRange(WalkableSourcesNearSegment(
+                    new Segment(path[i], path[i + 1]), proximity, exitGroupId,
+                    distanceBeforeSegment, pathLength));
+            }
+            distanceBeforeSegment += lengths[i];
+        }
+        return sources;
+    }
+
+    public IReadOnlyList<DistanceSource> WalkableSourcesNearSegment(
+        Segment segment,
+        double proximity,
+        int? exitGroupId = null) =>
+        WalkableSourcesNearSegment(
+            segment,
+            proximity,
+            exitGroupId,
+            null,
+            null);
+
+    private IReadOnlyList<DistanceSource> WalkableSourcesNearSegment(
+        Segment segment,
+        double proximity,
+        int? exitGroupId,
+        double? distanceBeforeSegment,
+        double? pathLength)
+    {
         bool legacyPointExit = segment.Start == segment.End;
         if (ClearanceRadius > 0 && !legacyPointExit &&
-            Math.Sqrt(SquaredDistance(segment.Start, segment.End)) < 2 * ClearanceRadius)
+            (pathLength ?? Math.Sqrt(SquaredDistance(segment.Start, segment.End))) < 2 * ClearanceRadius)
         {
             return [];
         }
@@ -335,10 +392,14 @@ public sealed class WalkabilityGrid
             var contact = ClosestPoint(segment, center);
             double projection = (center.X - segment.Start.X) * dx +
                                 (center.Y - segment.Start.Y) * dy;
+            double distanceFromSegmentStart = Math.Sqrt(SquaredDistance(segment.Start, contact));
+            bool hasBodyEndClearance = distanceBeforeSegment is { } before
+                ? before + distanceFromSegmentStart >= ClearanceRadius &&
+                  pathLength!.Value - before - distanceFromSegmentStart >= ClearanceRadius
+                : distanceFromSegmentStart >= ClearanceRadius &&
+                  Math.Sqrt(SquaredDistance(contact, segment.End)) >= ClearanceRadius;
             if ((lengthSquared == 0 || projection >= 0 && projection <= lengthSquared) &&
-                (ClearanceRadius == 0 || legacyPointExit ||
-                 Math.Sqrt(SquaredDistance(contact, segment.Start)) >= ClearanceRadius &&
-                 Math.Sqrt(SquaredDistance(contact, segment.End)) >= ClearanceRadius) &&
+                (ClearanceRadius == 0 || legacyPointExit || hasBodyEndClearance) &&
                 HasLineOfSightToExit(center, contact, segment) &&
                 TryGetBodyArrival(center, contact, segment, legacyPointExit, out var arrival))
             {
