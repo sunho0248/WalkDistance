@@ -118,12 +118,34 @@ public partial class App : Application
         try
         {
             string executable = Environment.ProcessPath ?? throw new InvalidOperationException();
-            using var extension = Registry.CurrentUser.CreateSubKey(@"Software\Classes\.walkdistance");
-            extension?.SetValue(null, "WalkDistance.Project");
-            using var command = Registry.CurrentUser.CreateSubKey(
-                @"Software\Classes\WalkDistance.Project\shell\open\command");
-            command?.SetValue(null, $"\"{executable}\" \"%1\"");
-            SHChangeNotify(0x08000000, 0, IntPtr.Zero, IntPtr.Zero);
+            const string extensionPath = @"Software\Classes\.walkdistance";
+            const string commandPath = @"Software\Classes\WalkDistance.Project\shell\open\command";
+            const string projectType = "WalkDistance.Project";
+            string openCommand = $"\"{executable}\" \"%1\"";
+            bool changed = false;
+
+            using (var extension = Registry.CurrentUser.OpenSubKey(extensionPath))
+            {
+                if (!string.Equals(extension?.GetValue(null) as string, projectType, StringComparison.Ordinal))
+                {
+                    using var writableExtension = Registry.CurrentUser.CreateSubKey(extensionPath);
+                    writableExtension?.SetValue(null, projectType);
+                    changed = true;
+                }
+            }
+
+            using (var command = Registry.CurrentUser.OpenSubKey(commandPath))
+            {
+                if (!string.Equals(command?.GetValue(null) as string, openCommand, StringComparison.Ordinal))
+                {
+                    using var writableCommand = Registry.CurrentUser.CreateSubKey(commandPath);
+                    writableCommand?.SetValue(null, openCommand);
+                    changed = true;
+                }
+            }
+
+            if (changed)
+                SHChangeNotify(0x08000000, 0, IntPtr.Zero, IntPtr.Zero);
         }
         catch
         {

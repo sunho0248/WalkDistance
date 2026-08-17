@@ -5,7 +5,8 @@ namespace WalkDistance.Core;
 public sealed record DxfDocument(
     IReadOnlyList<Segment> Walls,
     int? InsUnits,
-    double MetersPerDrawingUnit);
+    double MetersPerDrawingUnit,
+    IReadOnlyList<IReadOnlyList<WorldPoint>> ExitPaths);
 
 public sealed class DxfUnitRequiredException : Exception
 {
@@ -32,6 +33,7 @@ public static class DxfLoader
     {
         var pairs = ReadPairs(reader);
         var segments = new List<Segment>();
+        var exitPaths = new List<IReadOnlyList<WorldPoint>>();
         int entitiesStart = FindEntitiesStart(pairs);
         if (entitiesStart < 0)
         {
@@ -47,6 +49,7 @@ public static class DxfLoader
             }
 
             var (type, attrs) = ReadEntity(pairs, ref i);
+            int firstSegment = segments.Count;
             switch (type.ToUpperInvariant())
             {
                 case "LINE":
@@ -64,6 +67,13 @@ public static class DxfLoader
                 case "ARC":
                     AddArc(segments, attrs);
                     break;
+            }
+
+            if (IsExitLayer(attrs) && segments.Count > firstSegment)
+            {
+                var path = new List<WorldPoint> { segments[firstSegment].Start };
+                path.AddRange(segments.Skip(firstSegment).Select(segment => segment.End));
+                exitPaths.Add(path);
             }
         }
 
@@ -89,7 +99,10 @@ public static class DxfLoader
         {
             throw new InvalidDataException("단위 변환 후 DXF 좌표가 유효 범위를 벗어났습니다.");
         }
-        return new DxfDocument(scaled, insUnits, scale);
+        var scaledExitPaths = exitPaths
+            .Select(path => (IReadOnlyList<WorldPoint>)path.Select(point => Scale(point, scale)).ToList())
+            .ToList();
+        return new DxfDocument(scaled, insUnits, scale, scaledExitPaths);
     }
 
     public static IReadOnlyList<Segment> LoadWalls(string filePath, double? unitlessMetersPerUnit = null) =>
@@ -184,6 +197,10 @@ public static class DxfLoader
 
     private static bool IsPair((int Code, string Value) pair, int code, string value) =>
         pair.Code == code && string.Equals(pair.Value, value, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsExitLayer(Dictionary<int, List<string>> attrs) =>
+        attrs.TryGetValue(8, out var layers) && layers.Count > 0 &&
+        string.Equals(layers[0], "WD_Exit", StringComparison.OrdinalIgnoreCase);
 
     private static (string Type, Dictionary<int, List<string>> Attrs) ReadEntity(
         IReadOnlyList<(int Code, string Value)> pairs, ref int i)

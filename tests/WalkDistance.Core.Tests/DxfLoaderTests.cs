@@ -146,6 +146,68 @@ public class DxfLoaderTests
     }
 
     [Fact]
+    public void Load_RetainsWdExitLineAndPolylinePathsInOrderAndMeters()
+    {
+        using var reader = new StringReader(DxfWithEntities("""
+            0
+            LINE
+            8
+            WD_Exit
+            10
+            0
+            20
+            0
+            11
+            1000
+            21
+            0
+            0
+            LWPOLYLINE
+            8
+            wd_exit
+            10
+            1000
+            20
+            0
+            10
+            1000
+            20
+            2000
+            10
+            3000
+            20
+            2000
+            0
+            LINE
+            8
+            Walls
+            10
+            0
+            20
+            1000
+            11
+            1000
+            21
+            1000
+            0
+            TEXT
+            8
+            WD_Exit
+            1
+            ignored
+            """, insUnits: 4));
+
+        var document = DxfLoader.Load(reader);
+
+        Assert.Equal(4, document.Walls.Count);
+        Assert.Equal(new[] { new WorldPoint(0, 0), new WorldPoint(1, 0) }, document.ExitPaths[0]);
+        Assert.Equal(
+            new[] { new WorldPoint(1, 0), new WorldPoint(1, 2), new WorldPoint(3, 2) },
+            document.ExitPaths[1]);
+        Assert.Equal(2, document.ExitPaths.Count);
+    }
+
+    [Fact]
     public void Load_DocumentWithoutSupportedWallsThrows()
     {
         using var reader = new StringReader(DxfWithEntities("""

@@ -88,8 +88,9 @@ public partial class MainWindow : Window
             _dxfPath = dialog.FileName;
             _projectPath = null;
             ResetAnalysis(clearExits: true);
+            _exitEditor.LoadPaths(document.ExitPaths);
             SetDirty(false);
-            StatusText.Text = $"{System.IO.Path.GetFileName(dialog.FileName)} 불러옴 · 벽 선분 {_walls.Count:N0}개 · 1 도면 단위 = {_metersPerDrawingUnit:G6} m";
+            StatusText.Text = $"{System.IO.Path.GetFileName(dialog.FileName)} 불러옴 · 벽 선분 {_walls.Count:N0}개 · 자동 불러온 출구 {document.ExitPaths.Count:N0}개 · 1 도면 단위 = {_metersPerDrawingUnit:G6} m";
             FitView();
             Redraw();
         }

@@ -214,6 +214,33 @@ public class AppSourceTests
         Assert.Contains("OnStartup", app);
         Assert.Contains("window.OpenProject(path)", app);
     }
+
+    [Fact]
+    public void App_FileAssociationOnlyWritesAndNotifiesWhenValuesChanged()
+    {
+        string method = ReadAppMethod("App.xaml.cs", "private static void RegisterFileAssociation");
+
+        Assert.Contains("OpenSubKey", method);
+        Assert.Contains("bool changed = false", method);
+        Assert.Contains("string.Equals", method);
+        Assert.Contains("if (changed)", method);
+        int guard = method.IndexOf("if (changed)", StringComparison.Ordinal);
+        int notify = method.IndexOf("SHChangeNotify", StringComparison.Ordinal);
+        Assert.True(guard >= 0 && notify > guard);
+        Assert.DoesNotContain("}", method[guard..notify]);
+    }
+
+    [Fact]
+    public void MainWindow_DirectDxfOpenLoadsAutomaticExitPathsAfterResetAndReportsCount()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnOpenDxf");
+        int reset = method.IndexOf("ResetAnalysis(clearExits: true)", StringComparison.Ordinal);
+        int load = method.IndexOf("_exitEditor.LoadPaths(document.ExitPaths)", StringComparison.Ordinal);
+
+        Assert.True(reset >= 0 && load > reset);
+        Assert.Contains("자동 불러온 출구 {document.ExitPaths.Count:N0}개", method);
+    }
+
     [Fact]
     public void MainWindow_HasDefaultOnIndependentMapAndPathToggles()
     {
