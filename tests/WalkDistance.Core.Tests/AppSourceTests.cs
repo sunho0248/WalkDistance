@@ -42,15 +42,13 @@ public class AppSourceTests
     }
 
     [Fact]
-    public void MainWindow_RendersSolidArrivalClearanceOnlyForSuccessfulBodyRoutes()
+    public void MainWindow_RendersClearanceOnlyForSuccessfulBodyQueryRoutes()
     {
         string source = ReadAppFile("MainWindow.xaml.cs");
         string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
         string pathOverlay = redraw[redraw.IndexOf("if (showPaths)", StringComparison.Ordinal)..];
 
-        Assert.Contains("if (_farthestPath is { } farthestPath && _bodyResult is { } bodyResult)", pathOverlay);
-        Assert.Contains("AddBodyClearanceOutline(farthestPath.Start", pathOverlay);
-        Assert.Contains("AddBodyClearanceOutline(farthestPath.Arrival", pathOverlay);
+        Assert.DoesNotContain("AddBodyClearanceOutline(farthestPath", pathOverlay);
         Assert.Contains("if (_queryPath is { } queryPath)", pathOverlay);
         Assert.Contains("AddBodyClearanceOutline(queryPath.Start", pathOverlay);
         Assert.Contains("AddBodyClearanceOutline(queryPath.Arrival", pathOverlay);
@@ -87,13 +85,36 @@ public class AppSourceTests
         Assert.Contains("private WalkabilityGrid? _bodyGrid", source);
         Assert.Contains("private DistanceMapResult? _bodyResult", source);
         Assert.Contains("DrawHeatmap(_mapGrid, _heatmapBitmap)", redraw);
-        Assert.Contains("_bodyResult?.MaxDistance", redraw);
+        Assert.Contains("_mapResult?.MaxDistance", redraw);
         Assert.Contains("DistanceMapCalculator.FindPath(_bodyGrid, _bodyResult", source);
         Assert.Contains("DistanceMapCalculator.Compute(mapGrid, sourceSets.Map)", calculate);
         Assert.Contains("DistanceMapCalculator.Compute(bodyGrid, sourceSets.Body)", calculate);
         Assert.Contains("InvalidateBodyAnalysis();", bodyChanged);
         Assert.DoesNotContain("InvalidateAnalysis();", bodyChanged);
         Assert.Contains("_applyBodyMeasurements", source);
+    }
+
+    [Fact]
+    public void MainWindow_MaximumOverlayUsesTheSameGeometricMapAsTheDistanceMap()
+    {
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        string calculate = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
+        string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
+        string pathOverlay = redraw[redraw.IndexOf("if (showPaths)", StringComparison.Ordinal)..];
+        string farthestCalculation = Slice(calculate, "var farthestPath", "return (normalContours");
+
+        Assert.Contains("results.Map.FarthestCell", calculate);
+        Assert.Contains("DistanceMapCalculator.FindPath(", farthestCalculation);
+        Assert.Contains("mapGrid", farthestCalculation);
+        Assert.Contains("results.Map", farthestCalculation);
+        Assert.DoesNotContain("results.Body.FarthestCell", calculate);
+        Assert.Contains("_mapResult.MaxDistance", calculate);
+        Assert.Contains("AddPathLabel(_farthestPath?.Points, _mapResult?.MaxDistance, Brushes.OrangeRed", pathOverlay);
+        Assert.DoesNotContain("AddBodyClearanceOutline(farthestPath", pathOverlay);
+        Assert.Contains("DistanceMapCalculator.FindPath(_bodyGrid, _bodyResult", source);
+        Assert.Contains("_farthestPath = restoredMap.FarthestPath", source);
+        Assert.DoesNotContain("_farthestPath = restored.FarthestPath", source);
+        Assert.DoesNotContain("_farthestPath", ReadAppMethod("MainWindow.xaml.cs", "private void InvalidateBodyAnalysis"));
     }
 
     [Fact]
@@ -290,9 +311,9 @@ public class AppSourceTests
     public void MainWindow_RedrawPassesComputedDistancesToPathLabelsGatedWithPaths()
     {
         string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
-        string pathOverlay = Slice(redraw, "if (showPaths)", "if (_farthestPath is");
+        string pathOverlay = Slice(redraw, "if (showPaths)", "if (_queryPoint is");
 
-        Assert.Contains("AddPathLabel(_farthestPath?.Points, _bodyResult?.MaxDistance, Brushes.OrangeRed", pathOverlay);
+        Assert.Contains("AddPathLabel(_farthestPath?.Points, _mapResult?.MaxDistance, Brushes.OrangeRed", pathOverlay);
         Assert.Contains("AddPathLabel(_queryPath?.Points, _queryDistance, Brushes.DeepSkyBlue", pathOverlay);
         Assert.Equal(2, pathOverlay.Split("AddPathLabel(").Length - 1);
         Assert.Equal(2, redraw.Split("AddPathLabel(").Length - 1);

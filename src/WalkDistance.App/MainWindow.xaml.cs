@@ -153,15 +153,18 @@ public partial class MainWindow : Window
         {
             var analysis = _mapGrid is not null && _mapResult is not null &&
                            _mapGrid.CellSize == cellSize.Value && _mapGrid.ClearanceRadius == 0
-                ? DistanceMapCache.Create(_mapGrid, _mapResult, null, null, null, null)
+                ? DistanceMapCache.Create(_mapGrid, _mapResult, null, null,
+                    _farthestPath?.Points, null,
+                    farthestPathStart: _farthestPath?.Start,
+                    farthestPathArrival: _farthestPath?.Arrival)
                 : null;
             double clearanceRadius = _applyBodyMeasurements ? profile.ClearanceRadius : 0;
             var bodyAnalysis = _bodyGrid is not null && _bodyResult is not null &&
                                _bodyGrid.CellSize == cellSize.Value && _bodyProfile == profile &&
                                _bodyGrid.ClearanceRadius == clearanceRadius
                 ? DistanceMapCache.Create(_bodyGrid, _bodyResult, _queryPoint, _queryDistance,
-                    _farthestPath?.Points, _queryPath?.Points, _applyBodyMeasurements ? profile : null,
-                    _farthestPath?.Start, _farthestPath?.Arrival, _queryPath?.Start, _queryPath?.Arrival)
+                    null, _queryPath?.Points, _applyBodyMeasurements ? profile : null,
+                    queryPathStart: _queryPath?.Start, queryPathArrival: _queryPath?.Arrival)
                 : null;
             ProjectFile.Save(path, new ProjectData(
                 Version: 8,
@@ -225,7 +228,13 @@ public partial class MainWindow : Window
                 if (cache.IsCompatibleWith(mapGrid))
                 {
                     _mapGrid = mapGrid;
-                    _mapResult = cache.Restore(mapGrid).Result;
+                    var restoredMap = cache.Restore(mapGrid);
+                    _mapResult = restoredMap.Result;
+                    _farthestPath = restoredMap.FarthestPath ??
+                        (_mapResult.FarthestCell is { } farthest
+                            ? DistanceMapCalculator.FindPath(
+                                mapGrid, _mapResult, mapGrid.CellCenter(farthest.Col, farthest.Row))
+                            : null);
                     RefreshMapCaches();
 
                     if (data.BodyAnalysis is { } bodyCache)
@@ -243,7 +252,6 @@ public partial class MainWindow : Window
                             _bodyResult = restored.Result;
                             _queryPoint = restored.QueryPoint;
                             _queryDistance = restored.QueryDistance;
-                            _farthestPath = restored.FarthestPath;
                             _queryPath = restored.QueryPath;
                         }
                     }
@@ -1022,11 +1030,11 @@ public partial class MainWindow : Window
                     : [];
                 var heatmapBitmap = HeatmapRenderer.Render(
                     mapGrid, results.Map.Distances, results.Map.MaxDistance, threshold);
-                var farthestPath = results.Body.FarthestCell is { } farthest
+                var farthestPath = results.Map.FarthestCell is { } farthest
                     ? DistanceMapCalculator.FindPath(
-                        bodyGrid,
-                        results.Body,
-                        bodyGrid.CellCenter(farthest.Col, farthest.Row))
+                        mapGrid,
+                        results.Map,
+                        mapGrid.CellCenter(farthest.Col, farthest.Row))
                     : null;
                 return (normalContours, normalContourComponents, thresholdContours,
                     heatmapBitmap, farthestPath);
@@ -1040,9 +1048,9 @@ public partial class MainWindow : Window
             _queryPoint = null;
             _queryDistance = null;
             _queryPath = null;
-            StatusText.Text = _bodyResult.FarthestCell is null
+            StatusText.Text = _mapResult.FarthestCell is null
                 ? "도달 가능한 보행 영역이 없습니다."
-                : $"최대 보행거리: {_bodyResult.MaxDistance:F2} m · 계산 후 도면을 클릭하면 해당 최단경로를 표시합니다.";
+                : $"최대 보행거리: {_mapResult.MaxDistance:F2} m · 계산 후 도면을 클릭하면 해당 최단경로를 표시합니다.";
 
             if (_bodyResult.UnreachableCellCount > 0)
             {
@@ -1094,6 +1102,7 @@ public partial class MainWindow : Window
     {
         _mapGrid = null;
         _mapResult = null;
+        _farthestPath = null;
         ClearMapCaches();
         InvalidateBodyAnalysis(markDirty: false);
         if (_walls.Count > 0) SetDirty(true);
@@ -1105,7 +1114,6 @@ public partial class MainWindow : Window
         _bodyResult = null;
         _queryPoint = null;
         _queryDistance = null;
-        _farthestPath = null;
         _queryPath = null;
         if (markDirty && _walls.Count > 0) SetDirty(true);
     }
@@ -1295,16 +1303,8 @@ public partial class MainWindow : Window
         {
             AddPath(_farthestPath?.Points, Brushes.OrangeRed, 2.5);
             AddPath(_queryPath?.Points, Brushes.DeepSkyBlue, 2.5);
-            var farthestLabelPosition = AddPathLabel(_farthestPath?.Points, _bodyResult?.MaxDistance, Brushes.OrangeRed);
+            var farthestLabelPosition = AddPathLabel(_farthestPath?.Points, _mapResult?.MaxDistance, Brushes.OrangeRed);
             AddPathLabel(_queryPath?.Points, _queryDistance, Brushes.DeepSkyBlue, farthestLabelPosition);
-
-            if (_farthestPath is { } farthestPath && _bodyResult is { } bodyResult)
-            {
-                AddBodyClearanceOutline(farthestPath.Start, Brushes.OrangeRed,
-                    $"최대 보행거리 지점 ({bodyResult.MaxDistance:F2} m)");
-                AddBodyClearanceOutline(farthestPath.Arrival, Brushes.OrangeRed,
-                    "최대 보행거리 도착 중심", isArrival: true);
-            }
 
             if (_queryPoint is { } queryPoint)
             {
