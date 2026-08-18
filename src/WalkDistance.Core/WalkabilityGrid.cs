@@ -438,9 +438,10 @@ public sealed class WalkabilityGrid
         var exactArrival = new WorldPoint(
             contact.X + dx * ClearanceRadius / length,
             contact.Y + dy * ClearanceRadius / length);
+        double tolerance = GeometryTolerance(exit);
         if (!IsFinite(exactArrival) ||
             SquaredDistance(exactArrival, ClosestPoint(exit, exactArrival)) <
-            ClearanceRadius * ClearanceRadius - GeometryTolerance(exit) * GeometryTolerance(exit) ||
+            Math.Pow(Math.Max(0, ClearanceRadius - tolerance), 2) ||
             !HasBodyClearance(exactArrival, exit))
         {
             return false;
@@ -453,7 +454,7 @@ public sealed class WalkabilityGrid
     private bool HasBodyClearance(WorldPoint center, Segment exit)
     {
         double tolerance = GeometryTolerance(exit);
-        double minimumSquaredDistance = ClearanceRadius * ClearanceRadius - tolerance * tolerance;
+        double minimumSquaredDistance = Math.Pow(Math.Max(0, ClearanceRadius - tolerance), 2);
         return _walls.All(wall =>
             SquaredDistance(center, ClosestPoint(wall, center)) >= minimumSquaredDistance);
     }

@@ -208,6 +208,62 @@ public class DxfLoaderTests
     }
 
     [Fact]
+    public void Load_WdExitOnWallBoundaryProducesBodySourcesAtRealWorldOffset()
+    {
+        using var reader = new StringReader(DxfWithEntities("""
+            0
+            LWPOLYLINE
+            70
+            0
+            10
+            22943.67116923112
+            20
+            5036.688388349255
+            10
+            22943.67116923112
+            20
+            200
+            10
+            26318.37804968603
+            20
+            200
+            10
+            26318.37804968603
+            20
+            6136.688388349256
+            10
+            22943.67116923112
+            20
+            6136.688388349256
+            0
+            LINE
+            8
+            wd_exit
+            10
+            22943.67116923112
+            20
+            5036.688388349255
+            11
+            22943.67116923112
+            21
+            6136.688388349256
+            """, insUnits: 4));
+
+        var document = DxfLoader.Load(reader);
+        var exitPath = Assert.Single(document.ExitPaths);
+        var geometricGrid = WalkabilityGrid.Build(document.Walls, cellSize: 0.05);
+        var bodyGrid = WalkabilityGrid.Build(
+            document.Walls,
+            cellSize: 0.05,
+            clearanceRadius: BodyProfile.KoreanAdult.ClearanceRadius);
+
+        Assert.Equal(1.10, Math.Sqrt(Math.Pow(exitPath[1].X - exitPath[0].X, 2) +
+                                     Math.Pow(exitPath[1].Y - exitPath[0].Y, 2)), precision: 10);
+        Assert.NotEmpty(geometricGrid.WalkableSourcesNearSegment(exitPath, geometricGrid.CellSize));
+        Assert.NotEmpty(bodyGrid.WalkableSourcesNearSegment(exitPath, bodyGrid.CellSize));
+    }
+
+    [Fact]
     public void Load_DocumentWithoutSupportedWallsThrows()
     {
         using var reader = new StringReader(DxfWithEntities("""
