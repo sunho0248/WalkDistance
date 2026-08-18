@@ -71,12 +71,9 @@
                 <Separator/>
                 <CheckBox x:Name="MapOverlayToggle" Content="디스턴스 맵" IsChecked="True"
                           Checked="OnOverlayToggleChanged" Unchecked="OnOverlayToggleChanged" Margin="4,0"/>
-                <CheckBox x:Name="PathOverlayToggle" Content="전체 최대/클릭 경로" IsChecked="True"
+                <CheckBox x:Name="PathOverlayToggle" Content="최대/클릭 경로" IsChecked="True"
                           Checked="OnOverlayToggleChanged" Unchecked="OnOverlayToggleChanged" Margin="4,0"
-                          ToolTip="주황색: 인체 치수와 무관한 전체 최대 경로 · 파란색: 클릭 지점 인체 경로"/>
-                <CheckBox x:Name="BodyMaximumPathOverlayToggle" Content="인체 적용 최대 경로" IsChecked="True"
-                          Checked="OnOverlayToggleChanged" Unchecked="OnOverlayToggleChanged" Margin="4,0"
-                          ToolTip="자주색: 어깨너비를 적용한 최대 경로"/>
+                          ToolTip="인체 치수 적용 시 인체 적용 결과 하나만 표시 · 파란색: 클릭 지점 경로"/>
                 <Separator/>
                 <TextBlock Text="출구 모드 켬: 일반 출구는 두 번 클릭(자동 스냅) · 고정 길이는 마우스 위치가 중심인 전체 벽 경로를 미리보기 그대로 클릭해 확정 · Esc: 모드 종료/그리기 취소/조회 지우기 · 출구 모드 끔: 완료된 출구 클릭해 선택 후 Delete로 삭제 · 벽 클릭 위치가 중심이 되도록 기존 길이/방향으로 이동 · 휠: 포인터 중심 확대/축소 · 가운데 버튼 드래그: 화면 이동 · 가운데 버튼 더블클릭: 전체 보기"
                            Foreground="DimGray" VerticalAlignment="Center" Margin="4,0"/>

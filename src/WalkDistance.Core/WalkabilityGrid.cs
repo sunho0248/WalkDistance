@@ -381,7 +381,10 @@ public sealed class WalkabilityGrid
             return [];
         }
 
-        var candidates = WalkableCellsNearSegment(segment, proximity + ClearanceRadius);
+        // Reach the first free cell beyond the same center-to-corner radius used by inflation.
+        var candidates = WalkableCellsNearSegment(
+            segment, proximity + ClearanceRadius +
+                     (ClearanceRadius > 0 ? CellSize * Math.Sqrt(2) / 2 : 0));
         var sources = new List<DistanceSource>(candidates.Count);
         double dx = segment.End.X - segment.Start.X;
         double dy = segment.End.Y - segment.Start.Y;

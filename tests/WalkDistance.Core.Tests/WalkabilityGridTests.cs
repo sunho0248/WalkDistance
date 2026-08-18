@@ -71,6 +71,56 @@ public class WalkabilityGridTests
     }
 
     [Fact]
+    public void BodyExitSourcesCoverBothInteriorSidesRegardlessOfGridAlignment()
+    {
+        const double exitX = 22.94367116923112;
+        var exit = new Segment(new(exitX, 5.036688388349255), new(exitX, 6.136688388349255));
+        var walls = Rectangle(0.2, 0.2, 30.2, 10.2);
+        walls.Add(new Segment(new(exitX, 0.2), exit.Start));
+        walls.Add(exit);
+        walls.Add(new Segment(exit.End, new(exitX, 10.2)));
+        var grid = WalkabilityGrid.Build(walls, cellSize: 0.05,
+            clearanceRadius: BodyProfile.KoreanAdult.ClearanceRadius);
+
+        var sources = grid.WalkableSourcesNearSegment(exit, grid.CellSize, exitGroupId: 1);
+        var result = DistanceMapCalculator.Compute(grid, sources);
+
+        Assert.Contains(sources, source => grid.CellCenter(source.Col, source.Row).X < exitX);
+        Assert.Contains(sources, source => grid.CellCenter(source.Col, source.Row).X > exitX);
+        Assert.NotNull(DistanceMapCalculator.FindPath(grid, result, new WorldPoint(2, 8)));
+        Assert.NotNull(DistanceMapCalculator.FindPath(grid, result, new WorldPoint(28, 8)));
+    }
+
+    [Theory]
+    [InlineData(1.10)]
+    [InlineData(2.20)]
+    public void BodyGrid_PassesSufficientDoorOpenings(double openingWidth)
+    {
+        double gapStart = 5 - openingWidth / 2;
+        double gapEnd = 5 + openingWidth / 2;
+        var walls = Rectangle(0, 0, 10, 10);
+        walls.Add(new Segment(new(5, 0), new(5, gapStart)));
+        walls.Add(new Segment(new(5, gapEnd), new(5, 10)));
+        var grid = WalkabilityGrid.Build(walls, cellSize: 0.05,
+            clearanceRadius: BodyProfile.KoreanAdult.ClearanceRadius);
+        var source = grid.WorldToCell(new WorldPoint(2, 5));
+        var result = DistanceMapCalculator.Compute(grid, [source]);
+
+        Assert.NotNull(DistanceMapCalculator.FindPath(grid, result, new WorldPoint(8, 5)));
+    }
+
+    [Fact]
+    public void BodyGrid_PassesTwoMeterCorridor()
+    {
+        var grid = WalkabilityGrid.Build(Rectangle(0, 0, 10, 2), cellSize: 0.05,
+            clearanceRadius: BodyProfile.KoreanAdult.ClearanceRadius);
+        var source = grid.WorldToCell(new WorldPoint(1, 1));
+        var result = DistanceMapCalculator.Compute(grid, [source]);
+
+        Assert.NotNull(DistanceMapCalculator.FindPath(grid, result, new WorldPoint(9, 1)));
+    }
+
+    [Fact]
     public void WalkableSourcesNearSegment_PreservesLegacyPointExitWithClearance()
     {
         var grid = WalkabilityGrid.Build(Rectangle(0, 0, 4, 4), cellSize: 0.05, marginCells: 2,

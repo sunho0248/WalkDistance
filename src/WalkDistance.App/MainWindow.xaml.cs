@@ -1247,7 +1247,6 @@ public partial class MainWindow : Window
 
         bool showMap = MapOverlayToggle.IsChecked == true;
         bool showPaths = PathOverlayToggle.IsChecked == true;
-        bool showBodyMaximumPath = BodyMaximumPathOverlayToggle.IsChecked == true;
         if (showMap && _mapGrid is not null && _heatmapBitmap is not null)
         {
             DrawHeatmap(_mapGrid, _heatmapBitmap);
@@ -1317,16 +1316,28 @@ public partial class MainWindow : Window
             AddMarker(_transform.ToScreen(pendingStart), 4, Brushes.LightGreen, "출구 시작점 (지정 중)");
         }
 
-        Point? farthestLabelPosition = null;
         if (showPaths)
         {
-            const string farthestTooltip = "전체 최대 경로 (인체 치수와 무관한 기하학 거리)";
-            AddPath(_farthestPath?.Points, Brushes.OrangeRed, 2.5, farthestTooltip);
+            var maximumPath = _applyBodyMeasurements ? _bodyFarthestPath : _farthestPath;
+            var maximumDistance = _applyBodyMeasurements ? _bodyResult?.MaxDistance : _mapResult?.MaxDistance;
+            var maximumBrush = _applyBodyMeasurements ? Brushes.MediumVioletRed : Brushes.OrangeRed;
+            string maximumLabel = _applyBodyMeasurements ? "인체 적용 최대" : "전체 최대";
+            string maximumTooltip = _applyBodyMeasurements
+                ? $"인체 적용 최대 경로 (어깨 {_bodyProfile.ShoulderWidth:F2} m)"
+                : "전체 최대 경로 (인체 치수 미적용)";
+            AddPath(maximumPath?.Points, maximumBrush, 2.5, maximumTooltip);
             AddPath(_queryPath?.Points, Brushes.DeepSkyBlue, 2.5, "클릭 지점 인체 경로");
-            farthestLabelPosition = AddPathLabel(_farthestPath?.Points, _mapResult?.MaxDistance, Brushes.OrangeRed,
-                labelPrefix: "전체 최대", tooltip: farthestTooltip);
+            var farthestLabelPosition = AddPathLabel(maximumPath?.Points, maximumDistance, maximumBrush,
+                labelPrefix: maximumLabel, tooltip: maximumTooltip);
             AddPathLabel(_queryPath?.Points, _queryDistance, Brushes.DeepSkyBlue, farthestLabelPosition,
                 "클릭 지점", "클릭 지점 → 가장 가까운 출구 인체 경로");
+
+            if (_applyBodyMeasurements && maximumPath is { } bodyFarthestPath)
+            {
+                AddBodyClearanceOutline(bodyFarthestPath.Start, maximumBrush, maximumTooltip);
+                AddBodyClearanceOutline(bodyFarthestPath.Arrival, maximumBrush,
+                    "인체 적용 최대 경로 도착 중심", isArrival: true);
+            }
 
             if (_queryPoint is { } queryPoint)
             {
@@ -1340,23 +1351,6 @@ public partial class MainWindow : Window
                         "선택 지점 경로 도착 중심", isArrival: true);
                 }
                 else AddBodyClearanceOutline(queryPoint, Brushes.Gray, tooltip);
-            }
-        }
-
-        if (showBodyMaximumPath)
-        {
-            string label = _applyBodyMeasurements ? "인체 적용 최대" : "인체 미적용 최대";
-            string tooltip = _applyBodyMeasurements
-                ? $"인체 적용 최대 경로 (어깨 {_bodyProfile.ShoulderWidth:F2} m)"
-                : "인체 치수 미적용 최대 경로";
-            AddPath(_bodyFarthestPath?.Points, Brushes.MediumVioletRed, 2.5, tooltip);
-            AddPathLabel(_bodyFarthestPath?.Points, _bodyResult?.MaxDistance, Brushes.MediumVioletRed,
-                farthestLabelPosition, label, tooltip);
-            if (_bodyFarthestPath is { } bodyFarthestPath)
-            {
-                AddBodyClearanceOutline(bodyFarthestPath.Start, Brushes.MediumVioletRed, tooltip);
-                AddBodyClearanceOutline(bodyFarthestPath.Arrival, Brushes.MediumVioletRed,
-                    "인체 적용 최대 경로 도착 중심", isArrival: true);
             }
         }
     }

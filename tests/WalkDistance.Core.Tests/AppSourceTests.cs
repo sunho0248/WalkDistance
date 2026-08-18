@@ -95,7 +95,7 @@ public class AppSourceTests
     }
 
     [Fact]
-    public void MainWindow_MaximumOverlaysUseSeparateGeometricAndBodyResults()
+    public void MainWindow_SingleMaximumOverlayUsesTheActiveBodyResult()
     {
         string source = ReadAppFile("MainWindow.xaml.cs");
         string calculate = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
@@ -109,8 +109,11 @@ public class AppSourceTests
         Assert.Contains("results.Map", farthestCalculation);
         Assert.Contains("results.Body.FarthestCell", calculate);
         Assert.Contains("_mapResult.MaxDistance", calculate);
-        Assert.Contains("AddPathLabel(_farthestPath?.Points, _mapResult?.MaxDistance, Brushes.OrangeRed", pathOverlay);
-        Assert.Contains("AddPathLabel(_bodyFarthestPath?.Points, _bodyResult?.MaxDistance, Brushes.MediumVioletRed", pathOverlay);
+        Assert.Contains("var maximumPath = _applyBodyMeasurements ? _bodyFarthestPath : _farthestPath", pathOverlay);
+        Assert.Contains("var maximumDistance = _applyBodyMeasurements ? _bodyResult?.MaxDistance : _mapResult?.MaxDistance", pathOverlay);
+        Assert.Contains("AddPathLabel(maximumPath?.Points, maximumDistance, maximumBrush", pathOverlay);
+        Assert.DoesNotContain("AddPath(_farthestPath?.Points", pathOverlay);
+        Assert.DoesNotContain("AddPath(_bodyFarthestPath?.Points", pathOverlay);
         Assert.DoesNotContain("AddBodyClearanceOutline(farthestPath", pathOverlay);
         Assert.Contains("AddBodyClearanceOutline(bodyFarthestPath.Start", pathOverlay);
         Assert.Contains("AddBodyClearanceOutline(bodyFarthestPath.Arrival", pathOverlay);
@@ -122,19 +125,16 @@ public class AppSourceTests
     }
 
     [Fact]
-    public void MainWindow_MaximumPathsHaveIndependentClearTogglesAndTooltips()
+    public void MainWindow_HasOneMaximumPathToggleAndExplainsBodySelection()
     {
         string xaml = ReadAppFile("MainWindow.xaml");
         string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
 
-        Assert.Contains("x:Name=\"PathOverlayToggle\" Content=\"전체 최대/클릭 경로\"", xaml);
-        Assert.Contains("주황색: 인체 치수와 무관한 전체 최대 경로", xaml);
-        Assert.Contains("x:Name=\"BodyMaximumPathOverlayToggle\" Content=\"인체 적용 최대 경로\"", xaml);
-        Assert.Contains("자주색: 어깨너비를 적용한 최대 경로", xaml);
+        Assert.Contains("x:Name=\"PathOverlayToggle\" Content=\"최대/클릭 경로\"", xaml);
+        Assert.Contains("인체 치수 적용 시 인체 적용 결과", xaml);
+        Assert.DoesNotContain("BodyMaximumPathOverlayToggle", xaml);
         Assert.Contains("bool showPaths = PathOverlayToggle.IsChecked == true", redraw);
-        Assert.Contains("bool showBodyMaximumPath = BodyMaximumPathOverlayToggle.IsChecked == true", redraw);
         Assert.Contains("if (showPaths)", redraw);
-        Assert.Contains("if (showBodyMaximumPath)", redraw);
         Assert.Contains("전체 최대", redraw);
         Assert.Contains("인체 적용 최대", redraw);
         Assert.Contains("클릭 지점", redraw);
@@ -307,11 +307,10 @@ public class AppSourceTests
     {
         string xaml = ReadAppFile("MainWindow.xaml");
         Assert.Contains("x:Name=\"MapOverlayToggle\" Content=\"디스턴스 맵\"", xaml);
-        Assert.Contains("x:Name=\"PathOverlayToggle\" Content=\"전체 최대/클릭 경로\"", xaml);
-        Assert.Contains("x:Name=\"BodyMaximumPathOverlayToggle\" Content=\"인체 적용 최대 경로\"", xaml);
+        Assert.Contains("x:Name=\"PathOverlayToggle\" Content=\"최대/클릭 경로\"", xaml);
+        Assert.DoesNotContain("BodyMaximumPathOverlayToggle", xaml);
         Assert.Contains("x:Name=\"MapOverlayToggle\" Content=\"디스턴스 맵\" IsChecked=\"True\"", xaml);
-        Assert.Contains("x:Name=\"PathOverlayToggle\" Content=\"전체 최대/클릭 경로\" IsChecked=\"True\"", xaml);
-        Assert.Contains("x:Name=\"BodyMaximumPathOverlayToggle\" Content=\"인체 적용 최대 경로\" IsChecked=\"True\"", xaml);
+        Assert.Contains("x:Name=\"PathOverlayToggle\" Content=\"최대/클릭 경로\" IsChecked=\"True\"", xaml);
         Assert.Contains("Checked=\"OnOverlayToggleChanged\" Unchecked=\"OnOverlayToggleChanged\"", xaml);
     }
 
@@ -347,7 +346,7 @@ public class AppSourceTests
         string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
         Assert.Contains("MapOverlayToggle.IsChecked == true", redraw);
         Assert.Contains("PathOverlayToggle.IsChecked == true", redraw);
-        Assert.Contains("BodyMaximumPathOverlayToggle.IsChecked == true", redraw);
+        Assert.DoesNotContain("BodyMaximumPathOverlayToggle", redraw);
     }
 
     [Fact]
@@ -356,11 +355,10 @@ public class AppSourceTests
         string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
         string pathOverlay = Slice(redraw, "if (showPaths)", "if (_queryPoint is");
 
-        Assert.Contains("AddPathLabel(_farthestPath?.Points, _mapResult?.MaxDistance, Brushes.OrangeRed", pathOverlay);
+        Assert.Contains("AddPathLabel(maximumPath?.Points, maximumDistance, maximumBrush", pathOverlay);
         Assert.Contains("AddPathLabel(_queryPath?.Points, _queryDistance, Brushes.DeepSkyBlue", pathOverlay);
-        Assert.Contains("AddPathLabel(_bodyFarthestPath?.Points, _bodyResult?.MaxDistance, Brushes.MediumVioletRed", redraw);
         Assert.Equal(2, pathOverlay.Split("AddPathLabel(").Length - 1);
-        Assert.Equal(3, redraw.Split("AddPathLabel(").Length - 1);
+        Assert.Equal(2, redraw.Split("AddPathLabel(").Length - 1);
     }
 
     [Fact]
