@@ -95,7 +95,7 @@ public class AppSourceTests
     }
 
     [Fact]
-    public void MainWindow_MaximumOverlayUsesTheSameGeometricMapAsTheDistanceMap()
+    public void MainWindow_MaximumOverlaysUseSeparateGeometricAndBodyResults()
     {
         string source = ReadAppFile("MainWindow.xaml.cs");
         string calculate = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
@@ -107,14 +107,54 @@ public class AppSourceTests
         Assert.Contains("DistanceMapCalculator.FindPath(", farthestCalculation);
         Assert.Contains("mapGrid", farthestCalculation);
         Assert.Contains("results.Map", farthestCalculation);
-        Assert.DoesNotContain("results.Body.FarthestCell", calculate);
+        Assert.Contains("results.Body.FarthestCell", calculate);
         Assert.Contains("_mapResult.MaxDistance", calculate);
         Assert.Contains("AddPathLabel(_farthestPath?.Points, _mapResult?.MaxDistance, Brushes.OrangeRed", pathOverlay);
+        Assert.Contains("AddPathLabel(_bodyFarthestPath?.Points, _bodyResult?.MaxDistance, Brushes.MediumVioletRed", pathOverlay);
         Assert.DoesNotContain("AddBodyClearanceOutline(farthestPath", pathOverlay);
+        Assert.Contains("AddBodyClearanceOutline(bodyFarthestPath.Start", pathOverlay);
+        Assert.Contains("AddBodyClearanceOutline(bodyFarthestPath.Arrival", pathOverlay);
         Assert.Contains("DistanceMapCalculator.FindPath(_bodyGrid, _bodyResult", source);
         Assert.Contains("_farthestPath = restoredMap.FarthestPath", source);
-        Assert.DoesNotContain("_farthestPath = restored.FarthestPath", source);
+        Assert.Contains("_bodyFarthestPath = restored.FarthestPath", source);
         Assert.DoesNotContain("_farthestPath", ReadAppMethod("MainWindow.xaml.cs", "private void InvalidateBodyAnalysis"));
+        Assert.Contains("_bodyFarthestPath = null", ReadAppMethod("MainWindow.xaml.cs", "private void InvalidateBodyAnalysis"));
+    }
+
+    [Fact]
+    public void MainWindow_MaximumPathsHaveIndependentClearTogglesAndTooltips()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+        string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
+
+        Assert.Contains("x:Name=\"PathOverlayToggle\" Content=\"전체 최대/클릭 경로\"", xaml);
+        Assert.Contains("주황색: 인체 치수와 무관한 전체 최대 경로", xaml);
+        Assert.Contains("x:Name=\"BodyMaximumPathOverlayToggle\" Content=\"인체 적용 최대 경로\"", xaml);
+        Assert.Contains("자주색: 어깨너비를 적용한 최대 경로", xaml);
+        Assert.Contains("bool showPaths = PathOverlayToggle.IsChecked == true", redraw);
+        Assert.Contains("bool showBodyMaximumPath = BodyMaximumPathOverlayToggle.IsChecked == true", redraw);
+        Assert.Contains("if (showPaths)", redraw);
+        Assert.Contains("if (showBodyMaximumPath)", redraw);
+        Assert.Contains("전체 최대", redraw);
+        Assert.Contains("인체 적용 최대", redraw);
+        Assert.Contains("클릭 지점", redraw);
+        Assert.Contains("Brushes.OrangeRed", redraw);
+        Assert.Contains("Brushes.MediumVioletRed", redraw);
+        Assert.Contains("Brushes.DeepSkyBlue", redraw);
+    }
+
+    [Fact]
+    public void MainWindow_BodyMaximumPathRoundTripsThroughTheExistingBodyCache()
+    {
+        string save = ReadAppMethod("MainWindow.xaml.cs", "private bool SaveProject");
+        string load = ReadAppMethod("MainWindow.xaml.cs", "private void OnOpenProject");
+
+        Assert.Contains("_bodyFarthestPath?.Points", save);
+        Assert.Contains("farthestPathStart: _bodyFarthestPath?.Start", save);
+        Assert.Contains("farthestPathArrival: _bodyFarthestPath?.Arrival", save);
+        Assert.Contains("_bodyFarthestPath = restored.FarthestPath", load);
+        Assert.Contains("_bodyResult.FarthestCell", load);
+        Assert.Contains("DistanceMapCalculator.FindPath(", load);
     }
 
     [Fact]
@@ -267,9 +307,11 @@ public class AppSourceTests
     {
         string xaml = ReadAppFile("MainWindow.xaml");
         Assert.Contains("x:Name=\"MapOverlayToggle\" Content=\"디스턴스 맵\"", xaml);
-        Assert.Contains("x:Name=\"PathOverlayToggle\" Content=\"보행경로\"", xaml);
+        Assert.Contains("x:Name=\"PathOverlayToggle\" Content=\"전체 최대/클릭 경로\"", xaml);
+        Assert.Contains("x:Name=\"BodyMaximumPathOverlayToggle\" Content=\"인체 적용 최대 경로\"", xaml);
         Assert.Contains("x:Name=\"MapOverlayToggle\" Content=\"디스턴스 맵\" IsChecked=\"True\"", xaml);
-        Assert.Contains("x:Name=\"PathOverlayToggle\" Content=\"보행경로\" IsChecked=\"True\"", xaml);
+        Assert.Contains("x:Name=\"PathOverlayToggle\" Content=\"전체 최대/클릭 경로\" IsChecked=\"True\"", xaml);
+        Assert.Contains("x:Name=\"BodyMaximumPathOverlayToggle\" Content=\"인체 적용 최대 경로\" IsChecked=\"True\"", xaml);
         Assert.Contains("Checked=\"OnOverlayToggleChanged\" Unchecked=\"OnOverlayToggleChanged\"", xaml);
     }
 
@@ -305,6 +347,7 @@ public class AppSourceTests
         string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
         Assert.Contains("MapOverlayToggle.IsChecked == true", redraw);
         Assert.Contains("PathOverlayToggle.IsChecked == true", redraw);
+        Assert.Contains("BodyMaximumPathOverlayToggle.IsChecked == true", redraw);
     }
 
     [Fact]
@@ -315,8 +358,9 @@ public class AppSourceTests
 
         Assert.Contains("AddPathLabel(_farthestPath?.Points, _mapResult?.MaxDistance, Brushes.OrangeRed", pathOverlay);
         Assert.Contains("AddPathLabel(_queryPath?.Points, _queryDistance, Brushes.DeepSkyBlue", pathOverlay);
+        Assert.Contains("AddPathLabel(_bodyFarthestPath?.Points, _bodyResult?.MaxDistance, Brushes.MediumVioletRed", redraw);
         Assert.Equal(2, pathOverlay.Split("AddPathLabel(").Length - 1);
-        Assert.Equal(2, redraw.Split("AddPathLabel(").Length - 1);
+        Assert.Equal(3, redraw.Split("AddPathLabel(").Length - 1);
     }
 
     [Fact]
@@ -622,18 +666,19 @@ public class AppSourceTests
     }
 
     [Fact]
-    public void MainWindow_BodyZeroExitStopsWithKoreanBodyClearanceGuidance()
+    public void MainWindow_BodyZeroExitStillCalculatesTheGeometricMapWithGuidance()
     {
         string method = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
         string diagnostic = Slice(method, "if (sourceSets.Body.Count == 0)", "CalculationProgress.Value = 3");
 
-        Assert.Contains("InvalidateAnalysis();", diagnostic);
+        Assert.DoesNotContain("InvalidateAnalysis();", diagnostic);
         Assert.Contains("인체 치수", diagnostic);
         Assert.Contains("출구 전체 길이", diagnostic);
         Assert.Contains("어깨너비", diagnostic);
-        Assert.Contains("계산 중단", diagnostic);
-        Assert.Contains("Redraw();", diagnostic);
-        Assert.Contains("return;", diagnostic);
+        Assert.Contains("전체 거리맵은 계속 계산합니다", diagnostic);
+        Assert.DoesNotContain("return;", diagnostic);
+        Assert.Contains("인체 적용 최대", method);
+        Assert.Contains("경로 없음", method);
     }
 
     [Fact]

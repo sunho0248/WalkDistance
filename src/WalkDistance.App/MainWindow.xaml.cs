@@ -48,6 +48,7 @@ public partial class MainWindow : Window
     private WorldPoint? _queryPoint;
     private double? _queryDistance;
     private WalkingPath? _farthestPath;
+    private WalkingPath? _bodyFarthestPath;
     private WalkingPath? _queryPath;
     private IReadOnlyList<WorldPoint>? _previewRoute;
     private double? _threshold;
@@ -163,7 +164,9 @@ public partial class MainWindow : Window
                                _bodyGrid.CellSize == cellSize.Value && _bodyProfile == profile &&
                                _bodyGrid.ClearanceRadius == clearanceRadius
                 ? DistanceMapCache.Create(_bodyGrid, _bodyResult, _queryPoint, _queryDistance,
-                    null, _queryPath?.Points, _applyBodyMeasurements ? profile : null,
+                    _bodyFarthestPath?.Points, _queryPath?.Points, _applyBodyMeasurements ? profile : null,
+                    farthestPathStart: _bodyFarthestPath?.Start,
+                    farthestPathArrival: _bodyFarthestPath?.Arrival,
                     queryPathStart: _queryPath?.Start, queryPathArrival: _queryPath?.Arrival)
                 : null;
             ProjectFile.Save(path, new ProjectData(
@@ -252,6 +255,11 @@ public partial class MainWindow : Window
                             _bodyResult = restored.Result;
                             _queryPoint = restored.QueryPoint;
                             _queryDistance = restored.QueryDistance;
+                            _bodyFarthestPath = restored.FarthestPath ??
+                                (_bodyResult.FarthestCell is { } bodyFarthest
+                                    ? DistanceMapCalculator.FindPath(
+                                        bodyGrid, _bodyResult, bodyGrid.CellCenter(bodyFarthest.Col, bodyFarthest.Row))
+                                    : null);
                             _queryPath = restored.QueryPath;
                         }
                     }
@@ -956,6 +964,7 @@ public partial class MainWindow : Window
             _bodyResult = null;
             ClearMapCaches();
             _farthestPath = null;
+            _bodyFarthestPath = null;
             _queryPoint = null;
             _queryDistance = null;
             _queryPath = null;
@@ -995,15 +1004,11 @@ public partial class MainWindow : Window
             {
                 if (clearanceRadius > 0)
                 {
-                    InvalidateAnalysis();
                     MessageBox.Show(this,
-                        "인체 치수에 맞는 사용 가능한 출구가 없습니다. 출구 전체 길이가 어깨너비 이상인지, 벽과 충분한 여유가 있는지 확인하세요.",
-                        "인체 치수에 맞는 출구 없음",
+                        "인체 치수에 맞는 사용 가능한 출구가 없습니다. 출구 전체 길이가 어깨너비 이상인지, 벽과 충분한 여유가 있는지 확인하세요. 전체 거리맵은 계속 계산합니다.",
+                        "인체 치수에 맞는 경로 없음",
                         MessageBoxButton.OK,
                         MessageBoxImage.Information);
-                    StatusText.Text = "계산 중단: 인체 치수에 맞는 사용 가능한 출구가 없습니다.";
-                    Redraw();
-                    return;
                 }
             }
 
@@ -1036,21 +1041,32 @@ public partial class MainWindow : Window
                         results.Map,
                         mapGrid.CellCenter(farthest.Col, farthest.Row))
                     : null;
+                var bodyFarthestPath = results.Body.FarthestCell is { } bodyFarthest
+                    ? DistanceMapCalculator.FindPath(
+                        bodyGrid,
+                        results.Body,
+                        bodyGrid.CellCenter(bodyFarthest.Col, bodyFarthest.Row))
+                    : null;
                 return (normalContours, normalContourComponents, thresholdContours,
-                    heatmapBitmap, farthestPath);
+                    heatmapBitmap, farthestPath, bodyFarthestPath);
             });
             _normalContours = artifacts.normalContours;
             _normalContourComponents = artifacts.normalContourComponents;
             _thresholdContours = artifacts.thresholdContours;
             _heatmapBitmap = artifacts.heatmapBitmap;
             _farthestPath = artifacts.farthestPath;
+            _bodyFarthestPath = artifacts.bodyFarthestPath;
             AddExitToggle.IsChecked = false;
             _queryPoint = null;
             _queryDistance = null;
             _queryPath = null;
+            string bodyMaximumLabel = _applyBodyMeasurements ? "인체 적용 최대" : "인체 미적용 최대";
+            string bodyMaximumStatus = _bodyResult.FarthestCell is null
+                ? $"{bodyMaximumLabel}: 경로 없음"
+                : $"{bodyMaximumLabel}: {_bodyResult.MaxDistance:F2} m";
             StatusText.Text = _mapResult.FarthestCell is null
                 ? "도달 가능한 보행 영역이 없습니다."
-                : $"최대 보행거리: {_mapResult.MaxDistance:F2} m · 계산 후 도면을 클릭하면 해당 최단경로를 표시합니다.";
+                : $"전체 최대: {_mapResult.MaxDistance:F2} m · {bodyMaximumStatus} · 계산 후 도면을 클릭하면 해당 최단경로를 표시합니다.";
 
             if (_bodyResult.UnreachableCellCount > 0)
             {
@@ -1112,6 +1128,7 @@ public partial class MainWindow : Window
     {
         _bodyGrid = null;
         _bodyResult = null;
+        _bodyFarthestPath = null;
         _queryPoint = null;
         _queryDistance = null;
         _queryPath = null;
@@ -1230,6 +1247,7 @@ public partial class MainWindow : Window
 
         bool showMap = MapOverlayToggle.IsChecked == true;
         bool showPaths = PathOverlayToggle.IsChecked == true;
+        bool showBodyMaximumPath = BodyMaximumPathOverlayToggle.IsChecked == true;
         if (showMap && _mapGrid is not null && _heatmapBitmap is not null)
         {
             DrawHeatmap(_mapGrid, _heatmapBitmap);
@@ -1299,12 +1317,16 @@ public partial class MainWindow : Window
             AddMarker(_transform.ToScreen(pendingStart), 4, Brushes.LightGreen, "출구 시작점 (지정 중)");
         }
 
+        Point? farthestLabelPosition = null;
         if (showPaths)
         {
-            AddPath(_farthestPath?.Points, Brushes.OrangeRed, 2.5);
-            AddPath(_queryPath?.Points, Brushes.DeepSkyBlue, 2.5);
-            var farthestLabelPosition = AddPathLabel(_farthestPath?.Points, _mapResult?.MaxDistance, Brushes.OrangeRed);
-            AddPathLabel(_queryPath?.Points, _queryDistance, Brushes.DeepSkyBlue, farthestLabelPosition);
+            const string farthestTooltip = "전체 최대 경로 (인체 치수와 무관한 기하학 거리)";
+            AddPath(_farthestPath?.Points, Brushes.OrangeRed, 2.5, farthestTooltip);
+            AddPath(_queryPath?.Points, Brushes.DeepSkyBlue, 2.5, "클릭 지점 인체 경로");
+            farthestLabelPosition = AddPathLabel(_farthestPath?.Points, _mapResult?.MaxDistance, Brushes.OrangeRed,
+                labelPrefix: "전체 최대", tooltip: farthestTooltip);
+            AddPathLabel(_queryPath?.Points, _queryDistance, Brushes.DeepSkyBlue, farthestLabelPosition,
+                "클릭 지점", "클릭 지점 → 가장 가까운 출구 인체 경로");
 
             if (_queryPoint is { } queryPoint)
             {
@@ -1318,6 +1340,23 @@ public partial class MainWindow : Window
                         "선택 지점 경로 도착 중심", isArrival: true);
                 }
                 else AddBodyClearanceOutline(queryPoint, Brushes.Gray, tooltip);
+            }
+        }
+
+        if (showBodyMaximumPath)
+        {
+            string label = _applyBodyMeasurements ? "인체 적용 최대" : "인체 미적용 최대";
+            string tooltip = _applyBodyMeasurements
+                ? $"인체 적용 최대 경로 (어깨 {_bodyProfile.ShoulderWidth:F2} m)"
+                : "인체 치수 미적용 최대 경로";
+            AddPath(_bodyFarthestPath?.Points, Brushes.MediumVioletRed, 2.5, tooltip);
+            AddPathLabel(_bodyFarthestPath?.Points, _bodyResult?.MaxDistance, Brushes.MediumVioletRed,
+                farthestLabelPosition, label, tooltip);
+            if (_bodyFarthestPath is { } bodyFarthestPath)
+            {
+                AddBodyClearanceOutline(bodyFarthestPath.Start, Brushes.MediumVioletRed, tooltip);
+                AddBodyClearanceOutline(bodyFarthestPath.Arrival, Brushes.MediumVioletRed,
+                    "인체 적용 최대 경로 도착 중심", isArrival: true);
             }
         }
     }
@@ -1518,7 +1557,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private void AddPath(IReadOnlyList<WorldPoint>? points, Brush brush, double thickness)
+    private void AddPath(IReadOnlyList<WorldPoint>? points, Brush brush, double thickness, string? tooltip = null)
     {
         if (_transform is null || points is null || points.Count < 2)
         {
@@ -1531,11 +1570,13 @@ public partial class MainWindow : Window
             Stroke = brush,
             StrokeThickness = thickness,
             StrokeDashArray = new DoubleCollection { 4, 3 },
+            ToolTip = tooltip,
         });
     }
 
     private Point? AddPathLabel(
-        IReadOnlyList<WorldPoint>? points, double? distance, Brush brush, Point? occupied = null)
+        IReadOnlyList<WorldPoint>? points, double? distance, Brush brush, Point? occupied = null,
+        string? labelPrefix = null, string? tooltip = null)
     {
         if (_transform is null || points is null || points.Count < 2 ||
             distance is not { } value || !double.IsFinite(value) ||
@@ -1545,12 +1586,13 @@ public partial class MainWindow : Window
         var anchor = _transform.ToScreen(LabelPlacement.HalfLengthPoint(points));
         var label = new TextBlock
         {
-            Text = $"{value.ToString("F2", CultureInfo.InvariantCulture)} m",
+            Text = $"{labelPrefix}{(labelPrefix is null ? "" : " ")}{value.ToString("F2", CultureInfo.InvariantCulture)} m",
             Foreground = brush,
             Background = Brushes.White,
             FontSize = 12,
             FontWeight = FontWeights.SemiBold,
             Padding = new Thickness(3, 1, 3, 1),
+            ToolTip = tooltip,
         };
         label.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
 
