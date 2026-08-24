@@ -6,7 +6,64 @@ public sealed record DxfDocument(
     IReadOnlyList<Segment> Walls,
     int? InsUnits,
     double MetersPerDrawingUnit,
-    IReadOnlyList<IReadOnlyList<WorldPoint>> ExitPaths);
+    IReadOnlyList<IReadOnlyList<WorldPoint>> ExitPaths,
+    DxfLoadDiagnostics Diagnostics);
+
+/// <summary>
+/// Additive, read-only input-quality counters gathered during <see cref="DxfLoader.Load(string, double?)"/>.
+/// Never changes the parsed <see cref="DxfDocument.Walls"/>/<see cref="DxfDocument.ExitPaths"/> geometry —
+/// unsupported/degenerate entities are still counted-and-kept, matching pre-existing load behavior.
+/// </summary>
+public sealed record DxfLoadDiagnostics(
+    IReadOnlyDictionary<string, int> UnsupportedEntityCounts,
+    int ZeroLengthSegmentCount,
+    int TessellatedCurveCount,
+    int TessellationSegmentCount,
+    int DuplicateConsecutiveVertexCount)
+{
+    public static readonly DxfLoadDiagnostics Empty = new(
+        new Dictionary<string, int>(), 0, 0, 0, 0);
+
+    /// <summary>
+    /// True when the load produced anything worth a human's attention. Tessellation counts are
+    /// informational (expected whenever a drawing has arcs/circles), so they never drive this flag.
+    /// </summary>
+    public bool HasIssues =>
+        UnsupportedEntityCounts.Count > 0 || ZeroLengthSegmentCount > 0 || DuplicateConsecutiveVertexCount > 0;
+}
+
+/// <summary>
+/// Mutable accumulator for <see cref="DxfLoadDiagnostics"/>, threaded through the parse loop.
+/// </summary>
+internal sealed class DxfLoadDiagnosticsBuilder
+{
+    private readonly Dictionary<string, int> _unsupportedEntities = new(StringComparer.OrdinalIgnoreCase);
+
+    public int ZeroLengthSegmentCount { get; private set; }
+    public int TessellatedCurveCount { get; private set; }
+    public int TessellationSegmentCount { get; private set; }
+    public int DuplicateConsecutiveVertexCount { get; private set; }
+
+    public void RecordUnsupportedEntity(string type) =>
+        _unsupportedEntities[type] = _unsupportedEntities.GetValueOrDefault(type) + 1;
+
+    public void RecordZeroLengthSegment() => ZeroLengthSegmentCount++;
+
+    public void RecordTessellatedCurve(int segmentCount)
+    {
+        TessellatedCurveCount++;
+        TessellationSegmentCount += segmentCount;
+    }
+
+    public void RecordDuplicateConsecutiveVertex() => DuplicateConsecutiveVertexCount++;
+
+    public DxfLoadDiagnostics Build() => new(
+        new Dictionary<string, int>(_unsupportedEntities),
+        ZeroLengthSegmentCount,
+        TessellatedCurveCount,
+        TessellationSegmentCount,
+        DuplicateConsecutiveVertexCount);
+}
 
 public sealed class DxfUnitRequiredException : Exception
 {
@@ -34,6 +91,7 @@ public static class DxfLoader
         var pairs = ReadPairs(reader);
         var segments = new List<Segment>();
         var exitPaths = new List<IReadOnlyList<WorldPoint>>();
+        var diagnostics = new DxfLoadDiagnosticsBuilder();
         int entitiesStart = FindEntitiesStart(pairs);
         if (entitiesStart < 0)
         {
@@ -53,19 +111,22 @@ public static class DxfLoader
             switch (type.ToUpperInvariant())
             {
                 case "LINE":
-                    AddLine(segments, attrs);
+                    AddLine(segments, attrs, diagnostics);
                     break;
                 case "LWPOLYLINE":
-                    AddPolylineFromPoints(segments, attrs);
+                    AddPolylineFromPoints(segments, attrs, diagnostics);
                     break;
                 case "POLYLINE":
-                    i = AddLegacyPolyline(segments, attrs, pairs, i);
+                    i = AddLegacyPolyline(segments, attrs, pairs, i, diagnostics);
                     break;
                 case "CIRCLE":
-                    AddCircle(segments, attrs);
+                    AddCircle(segments, attrs, diagnostics);
                     break;
                 case "ARC":
-                    AddArc(segments, attrs);
+                    AddArc(segments, attrs, diagnostics);
+                    break;
+                default:
+                    diagnostics.RecordUnsupportedEntity(type);
                     break;
             }
 
@@ -102,7 +163,7 @@ public static class DxfLoader
         var scaledExitPaths = exitPaths
             .Select(path => (IReadOnlyList<WorldPoint>)path.Select(point => Scale(point, scale)).ToList())
             .ToList();
-        return new DxfDocument(scaled, insUnits, scale, scaledExitPaths);
+        return new DxfDocument(scaled, insUnits, scale, scaledExitPaths, diagnostics.Build());
     }
 
     public static IReadOnlyList<Segment> LoadWalls(string filePath, double? unitlessMetersPerUnit = null) =>
@@ -223,7 +284,7 @@ public static class DxfLoader
         return (type, attrs);
     }
 
-    private static void AddLine(List<Segment> segments, Dictionary<int, List<string>> attrs)
+    private static void AddLine(List<Segment> segments, Dictionary<int, List<string>> attrs, DxfLoadDiagnosticsBuilder diagnostics)
     {
         if (!TryGetDouble(attrs, 10, 0, out var x1) || !TryGetDouble(attrs, 20, 0, out var y1) ||
             !TryGetDouble(attrs, 11, 0, out var x2) || !TryGetDouble(attrs, 21, 0, out var y2))
@@ -231,10 +292,17 @@ public static class DxfLoader
             return;
         }
 
-        segments.Add(new Segment(new WorldPoint(x1, y1), new WorldPoint(x2, y2)));
+        var start = new WorldPoint(x1, y1);
+        var end = new WorldPoint(x2, y2);
+        if (start == end)
+        {
+            diagnostics.RecordZeroLengthSegment();
+        }
+
+        segments.Add(new Segment(start, end));
     }
 
-    private static void AddPolylineFromPoints(List<Segment> segments, Dictionary<int, List<string>> attrs)
+    private static void AddPolylineFromPoints(List<Segment> segments, Dictionary<int, List<string>> attrs, DxfLoadDiagnosticsBuilder diagnostics)
     {
         if (!attrs.TryGetValue(10, out var xs) || !attrs.TryGetValue(20, out var ys))
         {
@@ -254,14 +322,15 @@ public static class DxfLoader
             }
         }
 
-        AddChain(segments, points, closed);
+        AddChain(segments, points, closed, diagnostics);
     }
 
     private static int AddLegacyPolyline(
         List<Segment> segments,
         Dictionary<int, List<string>> polylineAttrs,
         IReadOnlyList<(int Code, string Value)> pairs,
-        int i)
+        int i,
+        DxfLoadDiagnosticsBuilder diagnostics)
     {
         bool closed = IsClosed(polylineAttrs);
         var points = new List<WorldPoint>();
@@ -280,7 +349,7 @@ public static class DxfLoader
             }
         }
 
-        AddChain(segments, points, closed);
+        AddChain(segments, points, closed, diagnostics);
         return i;
     }
 
@@ -289,11 +358,19 @@ public static class DxfLoader
         int.TryParse(flags[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var flag) &&
         (flag & 1) != 0;
 
-    private static void AddChain(List<Segment> segments, IReadOnlyList<WorldPoint> points, bool closed)
+    private static void AddChain(List<Segment> segments, IReadOnlyList<WorldPoint> points, bool closed, DxfLoadDiagnosticsBuilder diagnostics)
     {
         for (int index = 0; index < points.Count - 1; index++)
         {
-            segments.Add(new Segment(points[index], points[index + 1]));
+            var start = points[index];
+            var end = points[index + 1];
+            if (start == end)
+            {
+                diagnostics.RecordZeroLengthSegment();
+                diagnostics.RecordDuplicateConsecutiveVertex();
+            }
+
+            segments.Add(new Segment(start, end));
         }
 
         if (closed && points.Count > 2)
@@ -302,7 +379,7 @@ public static class DxfLoader
         }
     }
 
-    private static void AddCircle(List<Segment> segments, Dictionary<int, List<string>> attrs)
+    private static void AddCircle(List<Segment> segments, Dictionary<int, List<string>> attrs, DxfLoadDiagnosticsBuilder diagnostics)
     {
         if (!TryGetDouble(attrs, 10, 0, out var cx) || !TryGetDouble(attrs, 20, 0, out var cy) ||
             !TryGetDouble(attrs, 40, 0, out var radius) || radius <= 0)
@@ -310,10 +387,10 @@ public static class DxfLoader
             return;
         }
 
-        TessellateArc(segments, cx, cy, radius, 0, 360, CircleTessellation);
+        TessellateArc(segments, cx, cy, radius, 0, 360, CircleTessellation, diagnostics);
     }
 
-    private static void AddArc(List<Segment> segments, Dictionary<int, List<string>> attrs)
+    private static void AddArc(List<Segment> segments, Dictionary<int, List<string>> attrs, DxfLoadDiagnosticsBuilder diagnostics)
     {
         if (!TryGetDouble(attrs, 10, 0, out var cx) || !TryGetDouble(attrs, 20, 0, out var cy) ||
             !TryGetDouble(attrs, 40, 0, out var radius) || radius <= 0 ||
@@ -329,7 +406,7 @@ public static class DxfLoader
         }
 
         int steps = Math.Max(2, (int)(CircleTessellation * (endDegrees - startDegrees) / 360));
-        TessellateArc(segments, cx, cy, radius, startDegrees, endDegrees, steps);
+        TessellateArc(segments, cx, cy, radius, startDegrees, endDegrees, steps, diagnostics);
     }
 
     private static void TessellateArc(
@@ -339,7 +416,8 @@ public static class DxfLoader
         double radius,
         double startDegrees,
         double endDegrees,
-        int steps)
+        int steps,
+        DxfLoadDiagnosticsBuilder diagnostics)
     {
         var points = new List<WorldPoint>(steps + 1);
         for (int step = 0; step <= steps; step++)
@@ -347,7 +425,8 @@ public static class DxfLoader
             double angle = (startDegrees + (endDegrees - startDegrees) * step / steps) * Math.PI / 180;
             points.Add(new WorldPoint(cx + radius * Math.Cos(angle), cy + radius * Math.Sin(angle)));
         }
-        AddChain(segments, points, closed: false);
+        diagnostics.RecordTessellatedCurve(steps);
+        AddChain(segments, points, closed: false, diagnostics);
     }
 
     private static bool TryGetDouble(

@@ -288,6 +288,188 @@ public class DxfLoaderTests
         Assert.Throws<InvalidDataException>(() => DxfLoader.Load(reader));
     }
 
+    [Fact]
+    public void Load_UnsupportedEntityType_CountedInDiagnostics()
+    {
+        using var reader = new StringReader(DxfWithEntities("""
+            0
+            TEXT
+            10
+            0
+            20
+            0
+            1
+            hello
+            0
+            TEXT
+            10
+            1
+            20
+            1
+            1
+            world
+            0
+            LINE
+            10
+            0
+            20
+            0
+            11
+            5
+            21
+            0
+            """, insUnits: 6));
+
+        var document = DxfLoader.Load(reader);
+
+        Assert.Single(document.Walls);
+        Assert.Equal(2, document.Diagnostics.UnsupportedEntityCounts["TEXT"]);
+    }
+
+    [Fact]
+    public void Load_ZeroLengthLineSegment_CountedButKept()
+    {
+        using var reader = new StringReader(DxfWithEntities("""
+            0
+            LINE
+            10
+            0
+            20
+            0
+            11
+            0
+            21
+            0
+            0
+            LINE
+            10
+            0
+            20
+            0
+            11
+            5
+            21
+            0
+            """, insUnits: 6));
+
+        var document = DxfLoader.Load(reader);
+
+        Assert.Equal(2, document.Walls.Count);
+        Assert.Contains(document.Walls, s => s.Start == s.End);
+        Assert.Equal(1, document.Diagnostics.ZeroLengthSegmentCount);
+    }
+
+    [Fact]
+    public void Load_DuplicateConsecutivePolylineVertices_CountedButKept()
+    {
+        using var reader = new StringReader(DxfWithEntities("""
+            0
+            LWPOLYLINE
+            70
+            0
+            10
+            0
+            20
+            0
+            10
+            0
+            20
+            0
+            10
+            3
+            20
+            0
+            """, insUnits: 6));
+
+        var document = DxfLoader.Load(reader);
+
+        Assert.Equal(2, document.Walls.Count);
+        Assert.Equal(1, document.Diagnostics.DuplicateConsecutiveVertexCount);
+        Assert.Equal(1, document.Diagnostics.ZeroLengthSegmentCount);
+    }
+
+    [Fact]
+    public void Load_ArcAndCircleEntities_TessellationCountsRecorded()
+    {
+        using var reader = new StringReader(DxfWithEntities("""
+            0
+            CIRCLE
+            10
+            5
+            20
+            5
+            40
+            1
+            0
+            ARC
+            10
+            8
+            20
+            8
+            40
+            1
+            50
+            0
+            51
+            90
+            """, insUnits: 6));
+
+        var document = DxfLoader.Load(reader);
+
+        Assert.Equal(2, document.Diagnostics.TessellatedCurveCount);
+        Assert.Equal(40, document.Diagnostics.TessellationSegmentCount); // 32 (circle) + 8 (90-degree arc)
+    }
+
+    [Fact]
+    public void Load_NoQualityIssues_DiagnosticsAreEmpty()
+    {
+        using var reader = new StringReader(DxfWithEntities("""
+            0
+            LINE
+            10
+            0
+            20
+            0
+            11
+            5
+            21
+            0
+            """, insUnits: 6));
+
+        var document = DxfLoader.Load(reader);
+
+        Assert.Empty(document.Diagnostics.UnsupportedEntityCounts);
+        Assert.Equal(0, document.Diagnostics.ZeroLengthSegmentCount);
+        Assert.Equal(0, document.Diagnostics.TessellatedCurveCount);
+        Assert.Equal(0, document.Diagnostics.TessellationSegmentCount);
+        Assert.Equal(0, document.Diagnostics.DuplicateConsecutiveVertexCount);
+        Assert.False(document.Diagnostics.HasIssues);
+    }
+
+    [Fact]
+    public void Load_ExistingSampleRoomDxf_DiagnosticsMatchKnownCleanGeometry()
+    {
+        var document = DxfLoader.Load(SampleRoomDxfPath());
+
+        Assert.Empty(document.Diagnostics.UnsupportedEntityCounts);
+        Assert.Equal(0, document.Diagnostics.ZeroLengthSegmentCount);
+        Assert.Equal(0, document.Diagnostics.TessellatedCurveCount);
+        Assert.Equal(0, document.Diagnostics.DuplicateConsecutiveVertexCount);
+        Assert.False(document.Diagnostics.HasIssues);
+    }
+
+    private static string SampleRoomDxfPath()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "WalkDistance.sln")))
+        {
+            directory = directory.Parent;
+        }
+
+        Assert.NotNull(directory);
+        return Path.Combine(directory!.FullName, "samples", "sample-room.dxf");
+    }
+
     internal static string DxfWithEntities(string entities, int? insUnits)
     {
         var header = insUnits is null

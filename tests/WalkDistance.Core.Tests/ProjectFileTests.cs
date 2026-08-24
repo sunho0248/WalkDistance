@@ -106,6 +106,77 @@ public sealed class ProjectFileTests : IDisposable
     }
 
     [Fact]
+    public void Version8_CacheRoundTripsEnginePolicySchemaAndModelProvenance()
+    {
+        var walls = Rectangle(0, 0, 10, 10);
+        var grid = WalkabilityGrid.Build(walls, 1, marginCells: 0);
+        var source = grid.NearestWalkableCell(new WorldPoint(5, 5))!.Value;
+        var result = DistanceMapCalculator.Compute(grid, [source]) with
+        {
+            Engine = DistanceMapResult.ContinuousEngine,
+            PolicyVersion = ContinuousGeometry.PolicyVersion,
+            ModelHash = "MODEL-HASH",
+        };
+        var cache = DistanceMapCache.Create(grid, result, null, null, null, null);
+        var path = Path.Combine(_directory, "provenance.walkdistance");
+
+        ProjectFile.Save(path, new ProjectData(8, 1, 1, walls, [], Analysis: cache));
+        var restoredCache = ProjectFile.Load(path).Analysis!;
+        var restoredResult = restoredCache.Restore(grid).Result;
+
+        Assert.Equal(1, restoredCache.CacheSchemaVersion);
+        Assert.Equal(DistanceMapResult.ContinuousEngine, restoredCache.Engine);
+        Assert.Equal(ContinuousGeometry.PolicyVersion, restoredCache.PolicyVersion);
+        Assert.Equal("MODEL-HASH", restoredCache.ModelHash);
+        Assert.False(restoredCache.CanRestoreCompleteResult);
+        Assert.False(restoredCache.IsCompatibleWith(grid));
+        Assert.True(restoredCache.IsCompatibleWith(
+            grid, DistanceMapResult.ContinuousEngine, ContinuousGeometry.PolicyVersion));
+        Assert.Equal(restoredCache.Engine, restoredResult.Engine);
+        Assert.Equal(restoredCache.PolicyVersion, restoredResult.PolicyVersion);
+        Assert.Equal(restoredCache.ModelHash, restoredResult.ModelHash);
+    }
+
+    [Fact]
+    public void Version8_LegacyCacheWithoutProvenanceDefaultsToTheta()
+    {
+        var walls = Rectangle(0, 0, 10, 10);
+        var grid = WalkabilityGrid.Build(walls, 1, marginCells: 0);
+        var source = grid.NearestWalkableCell(new WorldPoint(5, 5))!.Value;
+        var cache = DistanceMapCache.Create(
+            grid, DistanceMapCalculator.Compute(grid, [source]), null, null, null, null);
+        var path = Path.Combine(_directory, "legacy-cache.walkdistance");
+        File.WriteAllText(path, JsonSerializer.Serialize(new
+        {
+            Version = 8,
+            CellSize = 1.0,
+            MetersPerDrawingUnit = 1.0,
+            Walls = walls,
+            Exits = Array.Empty<Segment>(),
+            ExitPaths = Array.Empty<IReadOnlyList<WorldPoint>>(),
+            BodyProfile = BodyProfile.KoreanAdult,
+            ApplyBodyMeasurements = true,
+            Analysis = new
+            {
+                cache.Rows, cache.Cols, cache.Distances, cache.Predecessors, cache.FarthestCell,
+                cache.MaxDistance, cache.UnreachableCellCount, cache.Roots, cache.SourceGroups,
+                cache.WinningGroupIndexes,
+            },
+        }, new JsonSerializerOptions
+        {
+            NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
+        }));
+
+        var restored = ProjectFile.Load(path).Analysis!;
+
+        Assert.Equal(DistanceMapResult.ThetaEngine, restored.Engine);
+        Assert.Equal(DistanceMapResult.ThetaPolicyVersion, restored.PolicyVersion);
+        Assert.Equal(1, restored.CacheSchemaVersion);
+        Assert.True(restored.CanRestoreCompleteResult);
+        Assert.True(restored.IsCompatibleWith(grid));
+    }
+
+    [Fact]
     public void Version4_RoundTripsMultiPointExitPathsWithoutSourceDxf()
     {
         var dxfPath = Path.Combine(_directory, "room.dxf");

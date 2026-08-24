@@ -225,7 +225,9 @@ public sealed class WalkabilityGrid
     /// Finds the nearest walkable cell to a world point, searching outward ring by ring.
     /// Returns null if no walkable cell exists on the grid.
     /// </summary>
-    public (int Col, int Row)? NearestWalkableCell(WorldPoint p)
+    public (int Col, int Row)? NearestWalkableCell(
+        WorldPoint p,
+        CancellationToken cancellationToken = default)
     {
         var (col, row) = WorldToCell(p);
         if (IsWalkable(col, row))
@@ -236,6 +238,7 @@ public sealed class WalkabilityGrid
         int maxRadius = Math.Max(Cols, Rows);
         for (int radius = 1; radius <= maxRadius; radius++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             for (int dc = -radius; dc <= radius; dc++)
             {
                 for (int dr = -radius; dr <= radius; dr++)
@@ -259,7 +262,8 @@ public sealed class WalkabilityGrid
 
     public IReadOnlyList<(int Col, int Row)> WalkableCellsNearSegment(
         Segment segment,
-        double proximity)
+        double proximity,
+        CancellationToken cancellationToken = default)
     {
         if (!double.IsFinite(proximity) || proximity < 0)
         {
@@ -268,7 +272,7 @@ public sealed class WalkabilityGrid
 
         if (segment.Start == segment.End)
         {
-            var legacyCell = NearestWalkableCell(segment.Start);
+            var legacyCell = NearestWalkableCell(segment.Start, cancellationToken);
             return legacyCell is { } cell ? [cell] : [];
         }
 
@@ -281,6 +285,7 @@ public sealed class WalkabilityGrid
 
         for (int step = 0; step <= steps; step++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             double t = (double)step / steps;
             var (col, row) = WorldToCell(new WorldPoint(
                 segment.Start.X + dx * t,
@@ -300,7 +305,8 @@ public sealed class WalkabilityGrid
             }
         }
 
-        if (cells.Count == 0 && NearestWalkableCell(segment.Start) is { } fallback)
+        if (cells.Count == 0 &&
+            NearestWalkableCell(segment.Start, cancellationToken) is { } fallback)
         {
             cells.Add(fallback);
         }
@@ -315,7 +321,8 @@ public sealed class WalkabilityGrid
     public IReadOnlyList<DistanceSource> WalkableSourcesNearSegment(
         IReadOnlyList<WorldPoint> path,
         double proximity,
-        int? exitGroupId = null)
+        int? exitGroupId = null,
+        CancellationToken cancellationToken = default)
     {
         if (path.Count == 0)
         {
@@ -323,33 +330,38 @@ public sealed class WalkabilityGrid
         }
         if (path.Count == 1)
         {
-            return WalkableSourcesNearSegment(new Segment(path[0], path[0]), proximity, exitGroupId);
+            return WalkableSourcesNearSegment(
+                new Segment(path[0], path[0]), proximity, exitGroupId, cancellationToken);
         }
         if (path.Count == 2)
         {
-            return WalkableSourcesNearSegment(new Segment(path[0], path[1]), proximity, exitGroupId);
+            return WalkableSourcesNearSegment(
+                new Segment(path[0], path[1]), proximity, exitGroupId, cancellationToken);
         }
 
         var lengths = new double[path.Count - 1];
         for (int i = 0; i < lengths.Length; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             lengths[i] = Math.Sqrt(SquaredDistance(path[i], path[i + 1]));
         }
         double pathLength = lengths.Sum();
         if (pathLength == 0)
         {
-            return WalkableSourcesNearSegment(new Segment(path[0], path[0]), proximity, exitGroupId);
+            return WalkableSourcesNearSegment(
+                new Segment(path[0], path[0]), proximity, exitGroupId, cancellationToken);
         }
 
         var sources = new List<DistanceSource>();
         double distanceBeforeSegment = 0;
         for (int i = 0; i < lengths.Length; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (lengths[i] > 0)
             {
                 sources.AddRange(WalkableSourcesNearSegment(
                     new Segment(path[i], path[i + 1]), proximity, exitGroupId,
-                    distanceBeforeSegment, pathLength));
+                    distanceBeforeSegment, pathLength, cancellationToken));
             }
             distanceBeforeSegment += lengths[i];
         }
@@ -359,20 +371,23 @@ public sealed class WalkabilityGrid
     public IReadOnlyList<DistanceSource> WalkableSourcesNearSegment(
         Segment segment,
         double proximity,
-        int? exitGroupId = null) =>
+        int? exitGroupId = null,
+        CancellationToken cancellationToken = default) =>
         WalkableSourcesNearSegment(
             segment,
             proximity,
             exitGroupId,
             null,
-            null);
+            null,
+            cancellationToken);
 
     private IReadOnlyList<DistanceSource> WalkableSourcesNearSegment(
         Segment segment,
         double proximity,
         int? exitGroupId,
         double? distanceBeforeSegment,
-        double? pathLength)
+        double? pathLength,
+        CancellationToken cancellationToken)
     {
         bool legacyPointExit = segment.Start == segment.End;
         if (ClearanceRadius > 0 && !legacyPointExit &&
@@ -384,13 +399,15 @@ public sealed class WalkabilityGrid
         // Reach the first free cell beyond the same center-to-corner radius used by inflation.
         var candidates = WalkableCellsNearSegment(
             segment, proximity + ClearanceRadius +
-                     (ClearanceRadius > 0 ? CellSize * Math.Sqrt(2) / 2 : 0));
+                     (ClearanceRadius > 0 ? CellSize * Math.Sqrt(2) / 2 : 0),
+            cancellationToken);
         var sources = new List<DistanceSource>(candidates.Count);
         double dx = segment.End.X - segment.Start.X;
         double dy = segment.End.Y - segment.Start.Y;
         double lengthSquared = dx * dx + dy * dy;
         foreach (var (col, row) in candidates)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var center = CellCenter(col, row);
             var contact = ClosestPoint(segment, center);
             double projection = (center.X - segment.Start.X) * dx +
@@ -472,8 +489,10 @@ public sealed class WalkabilityGrid
         IReadOnlyList<Segment> walls,
         double cellSize,
         int marginCells = 2,
-        double clearanceRadius = 0)
+        double clearanceRadius = 0,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!double.IsFinite(cellSize) || cellSize <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(cellSize), "Cell size must be positive.");
@@ -509,15 +528,16 @@ public sealed class WalkabilityGrid
 
         foreach (var wall in wallSnapshot)
         {
-            grid.RasterizeSegment(wall);
+            cancellationToken.ThrowIfCancellationRequested();
+            grid.RasterizeSegment(wall, cancellationToken);
         }
 
-        grid.ClassifyExterior();
+        grid.ClassifyExterior(cancellationToken);
 
         return grid;
     }
 
-    private void ClassifyExterior()
+    private void ClassifyExterior(CancellationToken cancellationToken)
     {
         var queue = new Queue<(int Col, int Row)>();
         void Enqueue(int col, int row)
@@ -544,6 +564,7 @@ public sealed class WalkabilityGrid
         ReadOnlySpan<int> dr = [0, 0, -1, 1];
         while (queue.TryDequeue(out var cell))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             for (int direction = 0; direction < 4; direction++)
             {
                 Enqueue(cell.Col + dc[direction], cell.Row + dr[direction]);
@@ -552,21 +573,24 @@ public sealed class WalkabilityGrid
 
         int interior = 0;
         for (int row = 0; row < Rows; row++)
-        for (int col = 0; col < Cols; col++)
         {
-            if (IsWalkable(col, row))
+            cancellationToken.ThrowIfCancellationRequested();
+            for (int col = 0; col < Cols; col++)
             {
-                interior++;
+                if (IsWalkable(col, row))
+                {
+                    interior++;
+                }
             }
         }
         InteriorCellCount = interior;
     }
 
-    private void RasterizeSegment(Segment wall)
+    private void RasterizeSegment(Segment wall, CancellationToken cancellationToken)
     {
         if (ClearanceRadius > 0)
         {
-            RasterizeInflatedSegment(wall);
+            RasterizeInflatedSegment(wall, cancellationToken);
             return;
         }
 
@@ -576,6 +600,7 @@ public sealed class WalkabilityGrid
 
         for (int s = 0; s <= steps; s++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             double t = (double)s / steps;
             var p = new WorldPoint(
                 wall.Start.X + (wall.End.X - wall.Start.X) * t,
@@ -585,7 +610,7 @@ public sealed class WalkabilityGrid
         }
     }
 
-    private void RasterizeInflatedSegment(Segment wall)
+    private void RasterizeInflatedSegment(Segment wall, CancellationToken cancellationToken)
     {
         double reach = ClearanceRadius + (CellSize * Math.Sqrt(2) / 2);
         double reachSquared = reach * reach;
@@ -599,11 +624,14 @@ public sealed class WalkabilityGrid
             (Math.Max(wall.Start.Y, wall.End.Y) + reach - Bounds.MinY) / CellSize));
 
         for (int row = minRow; row <= maxRow; row++)
-        for (int col = minCol; col <= maxCol; col++)
         {
-            if (SquaredDistance(CellCenter(col, row), ClosestPoint(wall, CellCenter(col, row))) <= reachSquared)
+            cancellationToken.ThrowIfCancellationRequested();
+            for (int col = minCol; col <= maxCol; col++)
             {
-                _blocked[row, col] = true;
+                if (SquaredDistance(CellCenter(col, row), ClosestPoint(wall, CellCenter(col, row))) <= reachSquared)
+                {
+                    _blocked[row, col] = true;
+                }
             }
         }
     }

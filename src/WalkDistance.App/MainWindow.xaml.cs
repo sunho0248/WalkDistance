@@ -16,6 +16,7 @@ public partial class MainWindow : Window
     private const double SelectionToleranceScreenPixels = 8;
     private const double ExitSnapToleranceScreenPixels = 12;
     private const double ZoomStepFactor = 1.1;
+    internal const string ContinuousRoutingSwitch = "WalkDistance.UseContinuousRouting";
 
     private List<Segment> _walls = [];
     private WallIndex _wallIndex = WallIndex.Build([]);
@@ -57,10 +58,13 @@ public partial class MainWindow : Window
     private IReadOnlyList<DistanceContour> _thresholdContours = [];
     private WriteableBitmap? _heatmapBitmap;
     private bool _isCalculating;
+    private CancellationTokenSource? _calculationCancellation;
+    private readonly bool _useContinuousRouting;
     private bool _isDirty;
 
     public MainWindow()
     {
+        _useContinuousRouting = AppContext.TryGetSwitch(ContinuousRoutingSwitch, out bool enabled) && enabled;
         InitializeComponent();
         UpdateTitle();
     }
@@ -92,6 +96,7 @@ public partial class MainWindow : Window
             _exitEditor.LoadPaths(document.ExitPaths);
             SetDirty(false);
             StatusText.Text = $"{System.IO.Path.GetFileName(dialog.FileName)} 불러옴 · 벽 선분 {_walls.Count:N0}개 · 자동 불러온 출구 {document.ExitPaths.Count:N0}개 · 1 도면 단위 = {_metersPerDrawingUnit:G6} m";
+            UpdateDxfDiagnostics(document.Diagnostics);
             FitView();
             Redraw();
         }
@@ -99,6 +104,48 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(this, $"DXF 불러오기 실패: {ex.Message}", "오류", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    // Non-blocking, advisory-only DXF load-quality affordance. Never uses MessageBox.Show
+    // or .ShowDialog() — those block the UI thread. Never surfaces the continuous engine's
+    // own internal diagnostics (ContinuousGeometryDiagnostics); this is upstream, DXF-load-time
+    // input-quality reporting only.
+    private void UpdateDxfDiagnostics(DxfLoadDiagnostics diagnostics)
+    {
+        if (!diagnostics.HasIssues)
+        {
+            DxfDiagnosticsText.Visibility = Visibility.Collapsed;
+            DxfDiagnosticsText.ToolTip = null;
+            return;
+        }
+
+        int issueCount = diagnostics.UnsupportedEntityCounts.Values.Sum() +
+            diagnostics.ZeroLengthSegmentCount + diagnostics.DuplicateConsecutiveVertexCount;
+        DxfDiagnosticsText.Text = $"· 확인 필요 항목 {issueCount:N0}건";
+        DxfDiagnosticsText.ToolTip = BuildDxfDiagnosticsDetail(diagnostics);
+        DxfDiagnosticsText.Visibility = Visibility.Visible;
+    }
+
+    private static string BuildDxfDiagnosticsDetail(DxfLoadDiagnostics diagnostics)
+    {
+        var lines = new List<string>();
+        foreach (var entry in diagnostics.UnsupportedEntityCounts.OrderByDescending(pair => pair.Value))
+        {
+            lines.Add($"지원하지 않는 엔티티 {entry.Key}: {entry.Value:N0}개 (무시됨)");
+        }
+        if (diagnostics.ZeroLengthSegmentCount > 0)
+        {
+            lines.Add($"길이 0인 선분: {diagnostics.ZeroLengthSegmentCount:N0}개 (그대로 유지됨)");
+        }
+        if (diagnostics.DuplicateConsecutiveVertexCount > 0)
+        {
+            lines.Add($"중복된 연속 꼭짓점: {diagnostics.DuplicateConsecutiveVertexCount:N0}개 (그대로 유지됨)");
+        }
+        if (diagnostics.TessellatedCurveCount > 0)
+        {
+            lines.Add($"호/원 테셀레이션: 곡선 {diagnostics.TessellatedCurveCount:N0}개 → 직선 {diagnostics.TessellationSegmentCount:N0}개 근사");
+        }
+        return string.Join("\n", lines);
     }
 
     private DxfDocument? LoadDxfWithUnitSelection(string path)
@@ -152,22 +199,29 @@ public partial class MainWindow : Window
 
         try
         {
+            var mapQueryPoint = _applyBodyMeasurements ? null : _queryPoint;
+            var mapQueryDistance = _applyBodyMeasurements ? null : _queryDistance;
+            var mapQueryPath = _applyBodyMeasurements ? null : _queryPath;
+            var bodyQueryPoint = _applyBodyMeasurements ? _queryPoint : null;
+            var bodyQueryDistance = _applyBodyMeasurements ? _queryDistance : null;
+            var bodyQueryPath = _applyBodyMeasurements ? _queryPath : null;
             var analysis = _mapGrid is not null && _mapResult is not null &&
                            _mapGrid.CellSize == cellSize.Value && _mapGrid.ClearanceRadius == 0
-                ? DistanceMapCache.Create(_mapGrid, _mapResult, null, null,
-                    _farthestPath?.Points, null,
+                ? DistanceMapCache.Create(_mapGrid, _mapResult, mapQueryPoint, mapQueryDistance,
+                    _farthestPath?.Points, mapQueryPath?.Points,
                     farthestPathStart: _farthestPath?.Start,
-                    farthestPathArrival: _farthestPath?.Arrival)
+                    farthestPathArrival: _farthestPath?.Arrival,
+                    queryPathStart: mapQueryPath?.Start, queryPathArrival: mapQueryPath?.Arrival)
                 : null;
-            double clearanceRadius = _applyBodyMeasurements ? profile.ClearanceRadius : 0;
+            double clearanceRadius = profile.ClearanceRadius;
             var bodyAnalysis = _bodyGrid is not null && _bodyResult is not null &&
                                _bodyGrid.CellSize == cellSize.Value && _bodyProfile == profile &&
                                _bodyGrid.ClearanceRadius == clearanceRadius
-                ? DistanceMapCache.Create(_bodyGrid, _bodyResult, _queryPoint, _queryDistance,
-                    _bodyFarthestPath?.Points, _queryPath?.Points, _applyBodyMeasurements ? profile : null,
+                ? DistanceMapCache.Create(_bodyGrid, _bodyResult, bodyQueryPoint, bodyQueryDistance,
+                    _bodyFarthestPath?.Points, bodyQueryPath?.Points, profile,
                     farthestPathStart: _bodyFarthestPath?.Start,
                     farthestPathArrival: _bodyFarthestPath?.Arrival,
-                    queryPathStart: _queryPath?.Start, queryPathArrival: _queryPath?.Arrival)
+                    queryPathStart: bodyQueryPath?.Start, queryPathArrival: bodyQueryPath?.Arrival)
                 : null;
             ProjectFile.Save(path, new ProjectData(
                 Version: 8,
@@ -225,10 +279,18 @@ public partial class MainWindow : Window
             ShoulderWidthBox.Text = _bodyProfile.ShoulderWidth.ToString(CultureInfo.InvariantCulture);
             ResetAnalysis(clearExits: true);
             _exitEditor.LoadPaths(data.ExitPaths!);
+            bool skippedCachedAnalysis = false;
             if (data.Analysis is { } cache)
             {
                 var mapGrid = WalkabilityGrid.Build(_walls, data.CellSize);
-                if (cache.IsCompatibleWith(mapGrid))
+                string expectedEngine = _useContinuousRouting
+                    ? DistanceMapResult.ContinuousEngine
+                    : DistanceMapResult.ThetaEngine;
+                string expectedPolicy = _useContinuousRouting
+                    ? ContinuousGeometry.PolicyVersion
+                    : DistanceMapResult.ThetaPolicyVersion;
+                if (cache.CanRestoreCompleteResult &&
+                    cache.IsCompatibleWith(mapGrid, expectedEngine, expectedPolicy))
                 {
                     _mapGrid = mapGrid;
                     var restoredMap = cache.Restore(mapGrid);
@@ -238,35 +300,52 @@ public partial class MainWindow : Window
                             ? DistanceMapCalculator.FindPath(
                                 mapGrid, _mapResult, mapGrid.CellCenter(farthest.Col, farthest.Row))
                             : null);
+                    if (!_applyBodyMeasurements)
+                    {
+                        _queryPoint = restoredMap.QueryPoint;
+                        _queryDistance = restoredMap.QueryDistance;
+                        _queryPath = restoredMap.QueryPath;
+                    }
                     RefreshMapCaches();
 
                     if (data.BodyAnalysis is { } bodyCache)
                     {
-                        double clearanceRadius = _applyBodyMeasurements ? _bodyProfile.ClearanceRadius : 0;
+                        double clearanceRadius = _bodyProfile.ClearanceRadius;
                         var bodyGrid = WalkabilityGrid.Build(
                             _walls, data.CellSize, clearanceRadius: clearanceRadius);
-                        bool isCompatible = _applyBodyMeasurements
-                            ? bodyCache.IsCompatibleWith(bodyGrid, _bodyProfile)
-                            : bodyCache.IsCompatibleWith(bodyGrid);
+                        bool isCompatible = bodyCache.CanRestoreCompleteResult &&
+                            bodyCache.IsCompatibleWith(
+                                bodyGrid, _bodyProfile, expectedEngine, expectedPolicy);
                         if (isCompatible)
                         {
                             _bodyGrid = bodyGrid;
                             var restored = bodyCache.Restore(bodyGrid);
                             _bodyResult = restored.Result;
-                            _queryPoint = restored.QueryPoint;
-                            _queryDistance = restored.QueryDistance;
                             _bodyFarthestPath = restored.FarthestPath ??
                                 (_bodyResult.FarthestCell is { } bodyFarthest
                                     ? DistanceMapCalculator.FindPath(
                                         bodyGrid, _bodyResult, bodyGrid.CellCenter(bodyFarthest.Col, bodyFarthest.Row))
                                     : null);
-                            _queryPath = restored.QueryPath;
+                            if (_applyBodyMeasurements)
+                            {
+                                _queryPoint = restored.QueryPoint;
+                                _queryDistance = restored.QueryDistance;
+                                _queryPath = restored.QueryPath;
+                            }
                         }
                     }
+                }
+                else
+                {
+                    skippedCachedAnalysis = true;
                 }
             }
             SetDirty(false);
             StatusText.Text = $"프로젝트 v{data.Version} 불러옴: {System.IO.Path.GetFileName(path)} · 출구 {_exitEditor.Segments.Count}개";
+            if (skippedCachedAnalysis)
+            {
+                StatusText.Text += " · 현재 계산 방식과 다른 저장 결과는 복원하지 않았습니다.";
+            }
             FitView();
             Redraw();
         }
@@ -297,7 +376,17 @@ public partial class MainWindow : Window
 
     private void OnExit(object sender, RoutedEventArgs e) => Close();
 
-    private void OnWindowClosing(object? sender, CancelEventArgs e) => e.Cancel = !ConfirmDiscardChanges();
+    private void OnWindowClosing(object? sender, CancelEventArgs e)
+    {
+        if (_isCalculating)
+        {
+            _calculationCancellation?.Cancel();
+            StatusText.Text = "계산을 취소한 뒤 창을 다시 닫아 주세요.";
+            e.Cancel = true;
+            return;
+        }
+        e.Cancel = !ConfirmDiscardChanges();
+    }
 
     private bool ConfirmDiscardChanges()
     {
@@ -449,14 +538,16 @@ public partial class MainWindow : Window
             StatusText.Text = "출구 선택을 해제했습니다.";
         }
 
-        if (_bodyGrid is null || _bodyResult is null)
+        var activeGrid = _applyBodyMeasurements ? _bodyGrid : _mapGrid;
+        var activeResult = _applyBodyMeasurements ? _bodyResult : _mapResult;
+        if (activeGrid is null || activeResult is null)
         {
             Redraw();
             return;
         }
 
         _queryPoint = worldPoint;
-        if (!_bodyGrid.Contains(worldPoint))
+        if (!activeGrid.Contains(worldPoint))
         {
             _queryDistance = null;
             _queryPath = null;
@@ -464,18 +555,18 @@ public partial class MainWindow : Window
             Redraw();
             return;
         }
-        var queryCell = _bodyGrid.WorldToCell(worldPoint);
-        if (!_bodyGrid.IsWalkable(queryCell))
+        var queryCell = activeGrid.WorldToCell(worldPoint);
+        if (!activeGrid.IsWalkable(queryCell))
         {
             _queryDistance = null;
             _queryPath = null;
-            StatusText.Text = _bodyGrid.IsBlocked(queryCell.Col, queryCell.Row)
+            StatusText.Text = activeGrid.IsBlocked(queryCell.Col, queryCell.Row)
                 ? "선택 지점은 벽 위입니다."
                 : "선택 지점은 건물 외부입니다.";
             Redraw();
             return;
         }
-        var queryPath = DistanceMapCalculator.FindPath(_bodyGrid, _bodyResult, worldPoint);
+        var queryPath = DistanceMapCalculator.FindPath(activeGrid, activeResult, worldPoint);
         _queryPath = queryPath;
         _queryDistance = queryPath?.Distance;
         StatusText.Text = _queryDistance is { } distance
@@ -526,6 +617,14 @@ public partial class MainWindow : Window
 
         if (e.Key != Key.Escape)
         {
+            return;
+        }
+
+        if (_isCalculating)
+        {
+            _calculationCancellation?.Cancel();
+            StatusText.Text = "계산 취소 요청 중...";
+            e.Handled = true;
             return;
         }
 
@@ -758,13 +857,16 @@ public partial class MainWindow : Window
         }
 
         _applyBodyMeasurements = apply;
-        if (_walls.Count > 0)
-        {
-            InvalidateBodyAnalysis();
-        }
-        StatusText.Text = apply
-            ? $"인체 반경 {_bodyProfile.ClearanceRadius:F2} m · 다시 계산하세요."
-            : "인체 치수 미적용 · 다시 계산하세요.";
+        _queryPoint = null;
+        _queryDistance = null;
+        _queryPath = null;
+        var activeResult = apply ? _bodyResult : _mapResult;
+        StatusText.Text = activeResult?.FarthestCell is not null
+            ? $"전체 최대: {activeResult.MaxDistance:F2} m · 계산 결과를 전환했습니다."
+            : apply
+                ? $"인체 반경 {_bodyProfile.ClearanceRadius:F2} m · 계산하세요."
+                : "인체 치수 미적용 · 계산하세요.";
+        if (_walls.Count > 0) SetDirty(true);
         Redraw();
     }
 
@@ -943,23 +1045,29 @@ public partial class MainWindow : Window
             return;
         }
         _bodyProfile = profile;
-        double clearanceRadius = _applyBodyMeasurements ? profile.ClearanceRadius : 0;
+        double clearanceRadius = profile.ClearanceRadius;
 
         var walls = _walls.ToArray();
         var exitPaths = _exitEditor.Paths.Select(path => path.ToArray()).ToArray();
+        using var cancellation = new CancellationTokenSource();
+        var cancellationToken = cancellation.Token;
+        _calculationCancellation = cancellation;
         _isCalculating = true;
         CalculateButton.IsEnabled = false;
         CalculationProgress.Visibility = Visibility.Visible;
         try
         {
             CalculationProgress.Value = 1;
-            StatusText.Text = "1/4 · 격자 생성 중...";
+            StatusText.Text = "1/4 · 격자 생성 중... · Esc: 취소";
             await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
-            var grids = await Task.Run(() => (
-                Map: WalkabilityGrid.Build(walls, cellSize.Value),
-                Body: WalkabilityGrid.Build(walls, cellSize.Value, clearanceRadius: clearanceRadius)));
-            _mapGrid = grids.Map;
-            _bodyGrid = grids.Body;
+            var mapGridTask = Task.Run(() => WalkabilityGrid.Build(
+                walls, cellSize.Value, cancellationToken: cancellationToken), cancellationToken);
+            var bodyGridTask = Task.Run(() =>
+                WalkabilityGrid.Build(walls, cellSize.Value, clearanceRadius: clearanceRadius,
+                    cancellationToken: cancellationToken), cancellationToken);
+            await Task.WhenAll(mapGridTask, bodyGridTask);
+            _mapGrid = await mapGridTask;
+            _bodyGrid = await bodyGridTask;
             _mapResult = null;
             _bodyResult = null;
             ClearMapCaches();
@@ -981,28 +1089,83 @@ public partial class MainWindow : Window
                 return;
             }
             CalculationProgress.Value = 2;
-            StatusText.Text = "2/4 · 출구 소스 생성 중...";
+            StatusText.Text = "2/4 · 출구 소스 생성 중... · Esc: 취소";
             await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
             var mapGrid = _mapGrid;
             var bodyGrid = _bodyGrid;
-            var sourceSets = await Task.Run(() => (
-                Map: exitPaths.SelectMany((path, exitGroupId) =>
-                    mapGrid.WalkableSourcesNearSegment(path, mapGrid.CellSize, exitGroupId))
-                    .ToList(),
-                Body: exitPaths.SelectMany((path, exitGroupId) =>
-                    bodyGrid.WalkableSourcesNearSegment(path, bodyGrid.CellSize, exitGroupId))
-                    .ToList()));
-            if (sourceSets.Map.Count == 0)
+            var mapSourcesTask = Task.Run(() =>
             {
-                InvalidateAnalysis();
-                MessageBox.Show(this, "건물 내부와 연결되는 사용 가능한 출구가 없습니다. 출구 위치를 확인하세요.", "알림");
-                StatusText.Text = "계산 중단: 건물 내부와 연결되는 사용 가능한 출구가 없습니다.";
-                Redraw();
-                return;
+                cancellationToken.ThrowIfCancellationRequested();
+                var sources = exitPaths.SelectMany((path, exitGroupId) =>
+                    mapGrid.WalkableSourcesNearSegment(
+                        path, mapGrid.CellSize, exitGroupId, cancellationToken))
+                    .ToList();
+                cancellationToken.ThrowIfCancellationRequested();
+                return sources;
+            }, cancellationToken);
+            var bodySourcesTask = Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var sources = exitPaths.SelectMany((path, exitGroupId) =>
+                    bodyGrid.WalkableSourcesNearSegment(
+                        path, bodyGrid.CellSize, exitGroupId, cancellationToken))
+                    .ToList();
+                cancellationToken.ThrowIfCancellationRequested();
+                return sources;
+            }, cancellationToken);
+            await Task.WhenAll(mapSourcesTask, bodySourcesTask);
+            var sourceSets = (Map: await mapSourcesTask, Body: await bodySourcesTask);
+
+            CalculationProgress.Value = 3;
+            StatusText.Text = _useContinuousRouting
+                ? "3/4 · 연속 경로 계산 중... · Esc: 취소"
+                : "3/4 · Theta* 보행거리 계산 중... · Esc: 취소";
+            await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
+            (DistanceMapResult Map, DistanceMapResult Body)? continuousResults = null;
+            bool usedThetaFallback = false;
+            if (_useContinuousRouting)
+            {
+                try
+                {
+                    continuousResults = await Task.Run(() =>
+                    {
+                        var map = ContinuousShortestPathMap.Build(
+                                ContinuousGeometry.Build(walls, exitPaths, cancellationToken: cancellationToken),
+                                cancellationToken)
+                            .SampleDistanceMap(mapGrid, cancellationToken);
+                        var body = ContinuousShortestPathMap.Build(
+                                ContinuousGeometry.Build(
+                                    walls, exitPaths, clearanceRadius, cancellationToken),
+                                cancellationToken)
+                            .SampleDistanceMap(bodyGrid, cancellationToken);
+                        return (map, body);
+                    }, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException and not OverflowException)
+                {
+                    usedThetaFallback = true;
+                    StatusText.Text = "3/4 · 연속 경로를 사용할 수 없어 Theta* 방식으로 전체 재계산 중... · Esc: 취소";
+                    await System.Windows.Threading.Dispatcher.Yield(
+                        System.Windows.Threading.DispatcherPriority.Render);
+                }
             }
-            if (sourceSets.Body.Count == 0)
+
+            if (continuousResults is null)
             {
-                if (clearanceRadius > 0)
+                cancellationToken.ThrowIfCancellationRequested();
+                if (sourceSets.Map.Count == 0)
+                {
+                    InvalidateAnalysis();
+                    MessageBox.Show(this, "건물 내부와 연결되는 사용 가능한 출구가 없습니다. 출구 위치를 확인하세요.", "알림");
+                    StatusText.Text = "계산 중단: 건물 내부와 연결되는 사용 가능한 출구가 없습니다.";
+                    Redraw();
+                    return;
+                }
+                if (sourceSets.Body.Count == 0 && _applyBodyMeasurements)
                 {
                     MessageBox.Show(this,
                         "인체 치수에 맞는 사용 가능한 출구가 없습니다. 출구 전체 길이가 어깨너비 이상인지, 벽과 충분한 여유가 있는지 확인하세요. 전체 거리맵은 계속 계산합니다.",
@@ -1010,23 +1173,26 @@ public partial class MainWindow : Window
                         MessageBoxButton.OK,
                         MessageBoxImage.Information);
                 }
-            }
 
-            CalculationProgress.Value = 3;
-            StatusText.Text = "3/4 · 보행거리 계산 중...";
-            await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
-            var results = await Task.Run(() => (
-                Map: DistanceMapCalculator.Compute(mapGrid, sourceSets.Map),
-                Body: DistanceMapCalculator.Compute(bodyGrid, sourceSets.Body)));
+                var mapResultTask = Task.Run(() =>
+                    DistanceMapCalculator.Compute(mapGrid, sourceSets.Map, cancellationToken), cancellationToken);
+                var bodyResultTask = Task.Run(() =>
+                    DistanceMapCalculator.Compute(bodyGrid, sourceSets.Body, cancellationToken), cancellationToken);
+                await Task.WhenAll(mapResultTask, bodyResultTask);
+                continuousResults = (await mapResultTask, await bodyResultTask);
+            }
+            var results = continuousResults.Value;
             _mapResult = results.Map;
             _bodyResult = results.Body;
 
             CalculationProgress.Value = 4;
-            StatusText.Text = "4/4 · 결과 렌더링 중...";
+            StatusText.Text = "4/4 · 결과 렌더링 중... · Esc: 취소";
             await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Render);
             var artifacts = await Task.Run(() =>
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var normalContours = DistanceContourGenerator.Generate(mapGrid, results.Map.Distances);
+                cancellationToken.ThrowIfCancellationRequested();
                 var normalContourComponents = DistanceContourAssembler.Assemble(
                     normalContours.Where(contour => contour.Level % 10 == 0).ToList(),
                     Math.Max(mapGrid.CellSize * 1e-6, 1e-9));
@@ -1035,6 +1201,7 @@ public partial class MainWindow : Window
                     : [];
                 var heatmapBitmap = HeatmapRenderer.Render(
                     mapGrid, results.Map.Distances, results.Map.MaxDistance, threshold);
+                cancellationToken.ThrowIfCancellationRequested();
                 var farthestPath = results.Map.FarthestCell is { } farthest
                     ? DistanceMapCalculator.FindPath(
                         mapGrid,
@@ -1049,7 +1216,7 @@ public partial class MainWindow : Window
                     : null;
                 return (normalContours, normalContourComponents, thresholdContours,
                     heatmapBitmap, farthestPath, bodyFarthestPath);
-            });
+            }, cancellationToken);
             _normalContours = artifacts.normalContours;
             _normalContourComponents = artifacts.normalContourComponents;
             _thresholdContours = artifacts.thresholdContours;
@@ -1060,20 +1227,29 @@ public partial class MainWindow : Window
             _queryPoint = null;
             _queryDistance = null;
             _queryPath = null;
-            string bodyMaximumLabel = _applyBodyMeasurements ? "인체 적용 최대" : "인체 미적용 최대";
-            string bodyMaximumStatus = _bodyResult.FarthestCell is null
-                ? $"{bodyMaximumLabel}: 경로 없음"
-                : $"{bodyMaximumLabel}: {_bodyResult.MaxDistance:F2} m";
-            StatusText.Text = _mapResult.FarthestCell is null
-                ? "도달 가능한 보행 영역이 없습니다."
-                : $"전체 최대: {_mapResult.MaxDistance:F2} m · {bodyMaximumStatus} · 계산 후 도면을 클릭하면 해당 최단경로를 표시합니다.";
+            var activeResult = _applyBodyMeasurements ? results.Body : results.Map;
+            string engineStatus = usedThetaFallback
+                ? "Theta* 대체 방식"
+                : activeResult.Engine == DistanceMapResult.ContinuousEngine
+                    ? "연속 경로 방식"
+                    : "Theta* 방식";
+            EngineStatusText.Text = $"계산 방식: {engineStatus}";
+            StatusText.Text = activeResult.FarthestCell is null
+                ? $"{engineStatus} · 전체 최대: 경로 없음 · 계산 후 도면을 클릭하면 해당 최단경로를 표시합니다."
+                : $"{engineStatus} · 전체 최대: {activeResult.MaxDistance:F2} m · 계산 후 도면을 클릭하면 해당 최단경로를 표시합니다.";
 
-            if (_bodyResult.UnreachableCellCount > 0)
+            if (activeResult.UnreachableCellCount > 0)
             {
-                StatusText.Text += $" · 도달 불가 {_bodyResult.UnreachableCellCount:N0}셀 제외";
+                StatusText.Text += $" · 도달 불가 {activeResult.UnreachableCellCount:N0}셀 제외";
             }
 
             SetDirty(true);
+            Redraw();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            InvalidateAnalysis();
+            StatusText.Text = "보행거리 계산을 취소했습니다.";
             Redraw();
         }
         catch (Exception ex) when (ex is OutOfMemoryException or OverflowException)
@@ -1087,11 +1263,11 @@ public partial class MainWindow : Window
             StatusText.Text = "계산 중단: 메모리가 부족합니다. 셀 크기를 키워 다시 계산하세요.";
             Redraw();
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             InvalidateAnalysis();
-            StatusText.Text = $"계산 실패: {ex.Message}";
-            MessageBox.Show(this, $"보행거리 계산 실패: {ex.Message}", "오류",
+            StatusText.Text = "계산 실패: 도면 형상과 출구 위치를 확인한 뒤 다시 시도하세요.";
+            MessageBox.Show(this, "보행거리 계산에 실패했습니다. 도면 형상과 출구 위치를 확인한 뒤 다시 시도하세요.", "오류",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             Redraw();
         }
@@ -1100,6 +1276,10 @@ public partial class MainWindow : Window
             CalculationProgress.Visibility = Visibility.Collapsed;
             CalculateButton.IsEnabled = true;
             _isCalculating = false;
+            if (ReferenceEquals(_calculationCancellation, cancellation))
+            {
+                _calculationCancellation = null;
+            }
         }
     }
 
@@ -1320,23 +1500,21 @@ public partial class MainWindow : Window
         {
             var maximumPath = _applyBodyMeasurements ? _bodyFarthestPath : _farthestPath;
             var maximumDistance = _applyBodyMeasurements ? _bodyResult?.MaxDistance : _mapResult?.MaxDistance;
-            var maximumBrush = _applyBodyMeasurements ? Brushes.MediumVioletRed : Brushes.OrangeRed;
-            string maximumLabel = _applyBodyMeasurements ? "인체 적용 최대" : "전체 최대";
-            string maximumTooltip = _applyBodyMeasurements
-                ? $"인체 적용 최대 경로 (어깨 {_bodyProfile.ShoulderWidth:F2} m)"
-                : "전체 최대 경로 (인체 치수 미적용)";
+            var maximumBrush = Brushes.OrangeRed;
+            const string maximumLabel = "전체 최대";
+            const string maximumTooltip = "전체 최대 경로";
             AddPath(maximumPath?.Points, maximumBrush, 2.5, maximumTooltip);
-            AddPath(_queryPath?.Points, Brushes.DeepSkyBlue, 2.5, "클릭 지점 인체 경로");
+            AddPath(_queryPath?.Points, Brushes.DeepSkyBlue, 2.5, "클릭 지점 경로");
             var farthestLabelPosition = AddPathLabel(maximumPath?.Points, maximumDistance, maximumBrush,
                 labelPrefix: maximumLabel, tooltip: maximumTooltip);
             AddPathLabel(_queryPath?.Points, _queryDistance, Brushes.DeepSkyBlue, farthestLabelPosition,
-                "클릭 지점", "클릭 지점 → 가장 가까운 출구 인체 경로");
+                "클릭 지점", "클릭 지점 → 가장 가까운 출구 경로");
 
             if (_applyBodyMeasurements && maximumPath is { } bodyFarthestPath)
             {
                 AddBodyClearanceOutline(bodyFarthestPath.Start, maximumBrush, maximumTooltip);
                 AddBodyClearanceOutline(bodyFarthestPath.Arrival, maximumBrush,
-                    "인체 적용 최대 경로 도착 중심", isArrival: true);
+                    "전체 최대 경로 도착 중심", isArrival: true);
             }
 
             if (_queryPoint is { } queryPoint)

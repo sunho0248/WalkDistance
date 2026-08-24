@@ -17,6 +17,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{7FBFF14D
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WalkDistance.Core.Tests", "tests\WalkDistance.Core.Tests\WalkDistance.Core.Tests.csproj", "{0CB87EC8-3E62-4443-A40F-1F11D9738420}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WalkDistance.ContinuousPrototype", "tools\WalkDistance.ContinuousPrototype\WalkDistance.ContinuousPrototype.csproj", "{3BCA2033-7D16-43A7-A012-14FDABBC30B1}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -46,6 +48,10 @@ Global
 		{0CB87EC8-3E62-4443-A40F-1F11D9738420}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0CB87EC8-3E62-4443-A40F-1F11D9738420}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{0CB87EC8-3E62-4443-A40F-1F11D9738420}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3BCA2033-7D16-43A7-A012-14FDABBC30B1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3BCA2033-7D16-43A7-A012-14FDABBC30B1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3BCA2033-7D16-43A7-A012-14FDABBC30B1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3BCA2033-7D16-43A7-A012-14FDABBC30B1}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{5D709697-037D-4AF2-A5E2-565EA4609C6B} = {F82C863D-2985-4EEF-BF55-72DEEC830929}

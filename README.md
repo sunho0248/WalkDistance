@@ -36,8 +36,8 @@
 - 임의 지점 클릭 시 가장 가까운 출구까지의 안전한 경로와 거리 조회
 - `인체 치수 적용` 시 어깨너비의 절반을 벽·출구 가장자리 여유로 사용하고, 경로는 사람이 실제로 설 수 있는 중심점까지 표시
 - 거리맵·5m 색상 구간·등거리선은 인체 치수와 무관한 원본 도면의 전체 이동 가능 영역을 표시
-- 최대 경로는 하나만 표시하며, 인체 치수 적용 시 자주색 인체 적용 결과를, 해제 시 주황색 전체 결과를 표시
-- 계산 진행 단계 표시 및 실행 중 중복 계산 방지
+- 최대 경로는 하나만 주황색 `전체 최대` 스타일로 표시하며, 현재 인체 치수 적용 여부에 맞는 결과를 사용
+- 기하학/인체 격자·출구 source·거리장을 멀티코어로 병렬 계산하고, 진행 단계 표시 및 실행 중 중복 계산 방지
 - `.walkdistance` 프로젝트 저장·열기
   - `Ctrl+S`로 저장하고 `Ctrl+Shift+S`로 다른 이름으로 저장합니다.
   - 벽 geometry, 출구 경로, 셀 크기, 단위 배율과 계산된 거리 맵·경로·조회 결과를 함께 보존합니다.
@@ -61,7 +61,9 @@
 6. **파일 > 프로젝트 저장** 또는 `Ctrl+S`로 `.walkdistance` 파일을 저장합니다. 계산된 거리 맵도 함께 저장되므로 다시 열 때 결과를 복원합니다.
 7. 원하는 영역만 확대하려면 도구 모음의 **Zoom Window**를 켠 뒤 점선 십자선 기준으로 도면에서 사각형을 드래그합니다. 확대가 적용되면 모드는 자동으로 꺼지며, `Esc`로도 취소할 수 있습니다.
 
-`디스턴스 맵`과 `최대/클릭 경로` 표시 옵션은 독립적입니다. 최대 경로는 인체 치수 적용 시 현재 어깨너비로 통과 가능한 자주색 경로 하나만 표시하고, 적용을 끄면 주황색 전체 최대 경로로 바뀝니다. 파란색은 클릭 지점에서 가장 가까운 출구까지의 현재 설정 적용 경로입니다.
+거리장 작업자 수는 Windows가 보고한 활성 물리 CPU 코어 수와 .NET 프로세스에 허용된 프로세서 수 중 작은 값입니다. 전체/인체 거리장은 이 한도를 프로세스 전체에서 공유하므로 동시에 계산해도 합산 작업자 수가 한도를 넘지 않으며, 임시 거리장도 출구 수가 아니라 작업자 수까지만 유지합니다. Windows 토폴로지 조회에 실패하면 .NET 프로세서 수를 안전한 대체값으로 사용하고, 출구 그룹이 코어보다 적으면 모든 코어를 사용하지 않을 수 있습니다.
+
+`디스턴스 맵`과 `최대/클릭 경로` 표시 옵션은 독립적입니다. 디스턴스 맵과 등거리선은 항상 원본 도면의 기하학 결과이며, 주황색 `전체 최대` 경로와 파란색 클릭 경로는 현재 인체 치수 적용 여부에 맞는 결과를 사용합니다. 한 번 계산하면 인체 치수 적용을 껐다 다시 켜도 두 결과를 그대로 전환하므로 재계산 없이 경로를 조회할 수 있습니다.
 
 인체 치수 적용 상태에서 보행경로의 점선 원은 출발 지점의 인체 여유이고, 실선 원은 출구 가까이 실제로 도달한 사람 중심입니다. 따라서 경로와 실선 원은 벽/출구 선에서 끝나지 않으며, 출구가 너무 좁거나 도달할 수 없으면 도착 원을 표시하지 않습니다. 꺾인 출구는 짧게 나뉜 개별 선분이 아니라 전체 출구 경로 길이로 어깨너비 충족 여부를 판정합니다. 인체 치수에 맞는 출구가 하나도 없으면 출구 전체 길이와 벽 여유를 확인하라는 안내를 표시합니다. 인체 치수를 끄면 기존처럼 기하학적 출구 선까지의 경로를 사용하고 인체 여유 원은 표시하지 않습니다.
 
@@ -103,6 +105,13 @@
 - 경로는 raster 격자와 보수적 line-of-sight 기반 Theta* 근사입니다. 원본 벡터 geometry의 전역 최단경로, 법규 자동판정, 또는 군중 피난시간 시뮬레이션을 보장하지는 않습니다.
 - 큰 도면에서 너무 작은 셀 크기를 선택하면 메모리 부족 또는 긴 계산 시간이 발생할 수 있습니다. 이 경우 셀 크기를 키워 빠르게 범위를 확인한 뒤, 중요한 구간을 작은 셀로 재검토하세요.
 
+### DXF 불러오기 진단
+
+DXF를 불러오면 지원하지 않는 엔티티 종류/개수, 길이 0인 선분, 원/호 테셀레이션 개수,
+중복된 연속 폴리라인 꼭짓점을 집계합니다(도면 geometry는 그대로 유지되며 아무것도
+제거·수정하지 않습니다). 확인할 항목이 있으면 상태 표시줄에 짧은 안내 문구가 추가로
+표시되며, 마우스를 올리면 세부 내용을 볼 수 있습니다. 창을 막는 대화상자는 뜨지 않습니다.
+
 ## 개발 환경과 검증
 
 소스에서 실행하거나 개발하려면 .NET 8 SDK가 필요합니다.
@@ -120,6 +129,33 @@ dotnet build src/WalkDistance.App/WalkDistance.App.csproj -c Release -r win-x64 
 dotnet publish src/WalkDistance.App/WalkDistance.App.csproj -c Release -r win-x64 --self-contained true --no-restore -o dist/win-x64
 Compress-Archive -Path dist\win-x64\* -DestinationPath dist\WalkDistance-win-x64.zip -Force
 ```
+
+연속 경로 엔진은 실험 검증용이며 기본값은 계속 Theta*입니다. 내부 검증에서만 생성된
+`WalkDistance.runtimeconfig.json`의 `runtimeOptions.configProperties`에
+`"WalkDistance.UseContinuousRouting": true`를 추가해 네이티브 AppContext 스위치를 켭니다.
+연속 계산 한 트랙이라도 완료되지 않으면 두 결과 모두 Theta*로 다시 계산하며, 취소는 대체
+계산을 시작하지 않습니다.
+
+계산이 끝나면 상태 표시줄에 계산 방식(Theta* 기본/연속 경로/Theta* 대체)을 표시하는 별도
+레이블이 항상 유지됩니다. 지도를 클릭해 조회해도 이 레이블은 바뀌지 않으며, 마우스를 올리면
+두 방식의 결과가 서로 다를 수 있다는 짧은 설명을 볼 수 있습니다. 계산 방식을 직접 선택하는
+UI는 없습니다(위 `runtimeconfig.json` 스위치로만 전환).
+
+연속 경로 샘플링은 셀마다 버리는 전체 경로를 만들지 않고 거리만 계산합니다. 클릭 조회와
+최대 지점 조회처럼 외부로 반환하는 경로는 기존처럼 전체 점 목록을 복원하고 안전성을 검증합니다.
+
+실제 DXF 벤치마크 하네스는 기존 `DxfLoader`를 사용하며 두 번 예열 후 지정한 횟수를 연속
+경로/Theta* 양쪽에서 측정합니다. 실제 익명화 도면은
+`tests/WalkDistance.Core.Tests/Fixtures/RealCorpus`에 로컬로 두되 `.dxf`를 커밋하지 않습니다.
+manifest가 비어 있으면 명령은 `no-corpus`를 기록하고 정상 종료합니다.
+
+```powershell
+dotnet run --project tools/WalkDistance.ContinuousPrototype -c Release -- benchmark-corpus --fixtures tests/WalkDistance.Core.Tests/Fixtures/RealCorpus --output artifacts/continuous-benchmark-corpus-empty.json --iterations 7
+dotnet run --project tools/WalkDistance.ContinuousPrototype -c Release -- benchmark-corpus --fixtures tests/WalkDistance.Core.Tests/Fixtures/RealCorpus --fixture samples/sample-room.dxf --sidecar samples/sample-room.benchmark.json --output artifacts/continuous-benchmark-corpus-sample-room.json --iterations 7
+```
+
+두 번째 명령의 `B-SAMPLE`은 DXF 파이프라인 자체를 확인하는 작은 self-test일 뿐이며
+`B-REAL-S/M/L` 실제 도면 수용 기준을 대신하지 않습니다.
 
 Release에는 `dist\WalkDistance-win-x64.zip`를 `WalkDistance-win-x64.zip` 이름으로 올립니다. publish 검증은 ZIP에 들어갈 루트에 `WalkDistance.Updater.exe`와 도우미 런타임 파일이 없으면 실패합니다.
 

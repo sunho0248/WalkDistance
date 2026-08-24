@@ -34,8 +34,8 @@ public class AppSourceTests
         Assert.Contains("private void OnBodyMeasurementsChanged", source);
         Assert.Contains("ShoulderWidthBox.IsEnabled", ReadAppMethod("MainWindow.xaml.cs", "private void OnBodyMeasurementsChanged"));
         Assert.Contains("InvalidateBodyAnalysis();", ReadAppMethod("MainWindow.xaml.cs", "private void OnBodyProfileChanged"));
-        Assert.Contains("WalkabilityGrid.Build(walls, cellSize.Value)", calculate);
-        Assert.Contains("double clearanceRadius = _applyBodyMeasurements ? profile.ClearanceRadius : 0", calculate);
+        Assert.Contains("WalkabilityGrid.Build(\n                walls, cellSize.Value, cancellationToken: cancellationToken)", calculate);
+        Assert.Contains("double clearanceRadius = profile.ClearanceRadius", calculate);
         Assert.Contains("clearanceRadius: clearanceRadius", calculate);
         Assert.Contains("AddBodyClearanceOutline", redraw);
         Assert.DoesNotContain("AddMarker(point, 8, Brushes.Red", redraw);
@@ -50,6 +50,8 @@ public class AppSourceTests
 
         Assert.DoesNotContain("AddBodyClearanceOutline(farthestPath", pathOverlay);
         Assert.Contains("if (_queryPath is { } queryPath)", pathOverlay);
+        Assert.Contains("if (!_applyBodyMeasurements", ReadAppMethod(
+            "MainWindow.xaml.cs", "private void AddBodyClearanceOutline"));
         Assert.Contains("AddBodyClearanceOutline(queryPath.Start", pathOverlay);
         Assert.Contains("AddBodyClearanceOutline(queryPath.Arrival", pathOverlay);
         Assert.DoesNotContain("farthestPath[^1]", pathOverlay);
@@ -70,6 +72,9 @@ public class AppSourceTests
         Assert.Contains("data.Analysis", load);
         Assert.Contains("data.BodyAnalysis", load);
         Assert.Contains("data.ApplyBodyMeasurements", load);
+        Assert.Contains("double clearanceRadius = profile.ClearanceRadius", save);
+        Assert.Contains("double clearanceRadius = _bodyProfile.ClearanceRadius", load);
+        Assert.Contains("bodyCache.IsCompatibleWith(\n                                bodyGrid, _bodyProfile, expectedEngine, expectedPolicy)", load);
     }
 
     [Fact]
@@ -86,9 +91,11 @@ public class AppSourceTests
         Assert.Contains("private DistanceMapResult? _bodyResult", source);
         Assert.Contains("DrawHeatmap(_mapGrid, _heatmapBitmap)", redraw);
         Assert.Contains("_mapResult?.MaxDistance", redraw);
-        Assert.Contains("DistanceMapCalculator.FindPath(_bodyGrid, _bodyResult", source);
-        Assert.Contains("DistanceMapCalculator.Compute(mapGrid, sourceSets.Map)", calculate);
-        Assert.Contains("DistanceMapCalculator.Compute(bodyGrid, sourceSets.Body)", calculate);
+        Assert.Contains("var activeGrid = _applyBodyMeasurements ? _bodyGrid : _mapGrid", source);
+        Assert.Contains("var activeResult = _applyBodyMeasurements ? _bodyResult : _mapResult", source);
+        Assert.Contains("DistanceMapCalculator.FindPath(activeGrid, activeResult", source);
+        Assert.Contains("DistanceMapCalculator.Compute(mapGrid, sourceSets.Map, cancellationToken)", calculate);
+        Assert.Contains("DistanceMapCalculator.Compute(bodyGrid, sourceSets.Body, cancellationToken)", calculate);
         Assert.Contains("InvalidateBodyAnalysis();", bodyChanged);
         Assert.DoesNotContain("InvalidateAnalysis();", bodyChanged);
         Assert.Contains("_applyBodyMeasurements", source);
@@ -108,7 +115,7 @@ public class AppSourceTests
         Assert.Contains("mapGrid", farthestCalculation);
         Assert.Contains("results.Map", farthestCalculation);
         Assert.Contains("results.Body.FarthestCell", calculate);
-        Assert.Contains("_mapResult.MaxDistance", calculate);
+        Assert.Contains("var activeResult = _applyBodyMeasurements ? results.Body : results.Map", calculate);
         Assert.Contains("var maximumPath = _applyBodyMeasurements ? _bodyFarthestPath : _farthestPath", pathOverlay);
         Assert.Contains("var maximumDistance = _applyBodyMeasurements ? _bodyResult?.MaxDistance : _mapResult?.MaxDistance", pathOverlay);
         Assert.Contains("AddPathLabel(maximumPath?.Points, maximumDistance, maximumBrush", pathOverlay);
@@ -117,11 +124,15 @@ public class AppSourceTests
         Assert.DoesNotContain("AddBodyClearanceOutline(farthestPath", pathOverlay);
         Assert.Contains("AddBodyClearanceOutline(bodyFarthestPath.Start", pathOverlay);
         Assert.Contains("AddBodyClearanceOutline(bodyFarthestPath.Arrival", pathOverlay);
-        Assert.Contains("DistanceMapCalculator.FindPath(_bodyGrid, _bodyResult", source);
+        Assert.Contains("DistanceMapCalculator.FindPath(activeGrid, activeResult", source);
         Assert.Contains("_farthestPath = restoredMap.FarthestPath", source);
         Assert.Contains("_bodyFarthestPath = restored.FarthestPath", source);
         Assert.DoesNotContain("_farthestPath", ReadAppMethod("MainWindow.xaml.cs", "private void InvalidateBodyAnalysis"));
         Assert.Contains("_bodyFarthestPath = null", ReadAppMethod("MainWindow.xaml.cs", "private void InvalidateBodyAnalysis"));
+        Assert.Contains("var maximumBrush = Brushes.OrangeRed", pathOverlay);
+        Assert.Contains("const string maximumLabel = \"전체 최대\"", pathOverlay);
+        Assert.DoesNotContain("Brushes.MediumVioletRed", pathOverlay);
+        Assert.DoesNotContain("인체 적용 최대", pathOverlay);
     }
 
     [Fact]
@@ -131,16 +142,51 @@ public class AppSourceTests
         string redraw = ReadAppMethod("MainWindow.xaml.cs", "private void Redraw");
 
         Assert.Contains("x:Name=\"PathOverlayToggle\" Content=\"최대/클릭 경로\"", xaml);
-        Assert.Contains("인체 치수 적용 시 인체 적용 결과", xaml);
+        Assert.Contains("주황색: 현재 설정의 전체 최대 경로", xaml);
         Assert.DoesNotContain("BodyMaximumPathOverlayToggle", xaml);
         Assert.Contains("bool showPaths = PathOverlayToggle.IsChecked == true", redraw);
         Assert.Contains("if (showPaths)", redraw);
         Assert.Contains("전체 최대", redraw);
-        Assert.Contains("인체 적용 최대", redraw);
         Assert.Contains("클릭 지점", redraw);
         Assert.Contains("Brushes.OrangeRed", redraw);
-        Assert.Contains("Brushes.MediumVioletRed", redraw);
+        Assert.DoesNotContain("Brushes.MediumVioletRed", redraw);
         Assert.Contains("Brushes.DeepSkyBlue", redraw);
+    }
+
+    [Fact]
+    public void MainWindow_BodyModeTogglePreservesBothCalculatedTracksAndReusesThemForClicks()
+    {
+        string changed = ReadAppMethod("MainWindow.xaml.cs", "private void OnBodyMeasurementsChanged");
+        string click = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasLeftClick");
+
+        Assert.DoesNotContain("InvalidateBodyAnalysis", changed);
+        Assert.DoesNotContain("_mapGrid = null", changed);
+        Assert.DoesNotContain("_bodyGrid = null", changed);
+        Assert.Contains("_queryPoint = null", changed);
+        Assert.Contains("_queryDistance = null", changed);
+        Assert.Contains("_queryPath = null", changed);
+        Assert.Contains("var activeGrid = _applyBodyMeasurements ? _bodyGrid : _mapGrid", click);
+        Assert.Contains("var activeResult = _applyBodyMeasurements ? _bodyResult : _mapResult", click);
+        Assert.Contains("DistanceMapCalculator.FindPath(activeGrid, activeResult, worldPoint)", click);
+        Assert.DoesNotContain("다시 계산하세요", changed);
+    }
+
+    [Fact]
+    public void MainWindow_CalculatesIndependentMapAndBodyStagesInParallelWithoutWorkerUiWrites()
+    {
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
+
+        Assert.Contains("var mapGridTask = Task.Run", method);
+        Assert.Contains("var bodyGridTask = Task.Run", method);
+        Assert.Contains("await Task.WhenAll(mapGridTask, bodyGridTask)", method);
+        Assert.Contains("var mapSourcesTask = Task.Run", method);
+        Assert.Contains("var bodySourcesTask = Task.Run", method);
+        Assert.Contains("await Task.WhenAll(mapSourcesTask, bodySourcesTask)", method);
+        Assert.Contains("var mapResultTask = Task.Run", method);
+        Assert.Contains("var bodyResultTask = Task.Run", method);
+        Assert.Contains("await Task.WhenAll(mapResultTask, bodyResultTask)", method);
+        Assert.DoesNotContain("Task.Run(() => _map", method);
+        Assert.DoesNotContain("Task.Run(() => _body", method);
     }
 
     [Fact]
@@ -514,7 +560,7 @@ public class AppSourceTests
         Assert.Contains("if (_isCalculating)", calculate);
         Assert.Contains("CalculateButton.IsEnabled = false", calculate);
         Assert.Contains("Dispatcher.Yield", calculate);
-        Assert.Equal(4, calculate.Split("Task.Run").Length - 1);
+        Assert.Equal(8, calculate.Split("Task.Run").Length - 1);
         Assert.Contains("격자 생성 중", calculate);
         Assert.Contains("출구 소스 생성 중", calculate);
         Assert.Contains("보행거리 계산 중", calculate);
@@ -526,12 +572,51 @@ public class AppSourceTests
     {
         string calculate = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
 
-        Assert.Contains("catch (Exception ex)", calculate);
-        Assert.Contains("ex.Message", calculate);
+        Assert.Contains("catch (Exception)", calculate);
+        Assert.DoesNotContain("ex.Message", calculate);
+        Assert.Contains("도면 형상과 출구 위치", calculate);
         Assert.Contains("finally", calculate);
         Assert.Contains("CalculateButton.IsEnabled = true", calculate);
         Assert.Contains("CalculationProgress.Visibility = Visibility.Collapsed", calculate);
         Assert.Contains("_isCalculating = false", calculate);
+    }
+
+    [Fact]
+    public void MainWindow_ContinuousRoutingIsNativeOptInWithWholeResultThetaFallback()
+    {
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        string calculate = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
+
+        Assert.Contains("WalkDistance.UseContinuousRouting", source);
+        Assert.Contains("AppContext.TryGetSwitch(ContinuousRoutingSwitch", source);
+        Assert.Contains("private readonly bool _useContinuousRouting", source);
+        Assert.Contains("(DistanceMapResult Map, DistanceMapResult Body)? continuousResults = null", calculate);
+        Assert.Contains("if (_useContinuousRouting)", calculate);
+        Assert.Contains("if (continuousResults is null)", calculate);
+        Assert.Contains("usedThetaFallback = true", calculate);
+        Assert.Contains("Theta* 방식으로 전체 재계산", calculate);
+        Assert.Contains("continuousResults = (await mapResultTask, await bodyResultTask)", calculate);
+        Assert.DoesNotContain("ex.Message", calculate);
+    }
+
+    [Fact]
+    public void MainWindow_EscapeCancelsEveryBackgroundStageWithoutTriggeringFallback()
+    {
+        string source = ReadAppFile("MainWindow.xaml.cs");
+        string calculate = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
+        string keyDown = ReadAppMethod("MainWindow.xaml.cs", "private void OnWindowPreviewKeyDown");
+        string closing = ReadAppMethod("MainWindow.xaml.cs", "private void OnWindowClosing");
+
+        Assert.Contains("private CancellationTokenSource? _calculationCancellation", source);
+        Assert.Contains("_calculationCancellation?.Cancel()", keyDown);
+        Assert.Contains("_calculationCancellation?.Cancel()", closing);
+        Assert.Contains("cancellationToken: cancellationToken", calculate);
+        Assert.Contains("DistanceMapCalculator.Compute(mapGrid, sourceSets.Map, cancellationToken)", calculate);
+        Assert.Contains("catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)", calculate);
+        Assert.Contains("보행거리 계산을 취소했습니다", calculate);
+        Assert.True(
+            calculate.IndexOf("catch (OperationCanceledException)", StringComparison.Ordinal) <
+            calculate.IndexOf("usedThetaFallback = true", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -658,8 +743,8 @@ public class AppSourceTests
         string method = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
 
         Assert.Contains("_exitEditor.Paths", method);
-        Assert.Contains("WalkableSourcesNearSegment(path, mapGrid.CellSize, exitGroupId)", method);
-        Assert.Contains("WalkableSourcesNearSegment(path, bodyGrid.CellSize, exitGroupId)", method);
+        Assert.Contains("path, mapGrid.CellSize, exitGroupId, cancellationToken)", method);
+        Assert.Contains("path, bodyGrid.CellSize, exitGroupId, cancellationToken)", method);
         Assert.DoesNotContain(".Zip(path.Skip(1)", method);
     }
 
@@ -667,7 +752,7 @@ public class AppSourceTests
     public void MainWindow_BodyZeroExitStillCalculatesTheGeometricMapWithGuidance()
     {
         string method = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
-        string diagnostic = Slice(method, "if (sourceSets.Body.Count == 0)", "CalculationProgress.Value = 3");
+        string diagnostic = Slice(method, "if (sourceSets.Body.Count == 0 &&", "var mapResultTask = Task.Run");
 
         Assert.DoesNotContain("InvalidateAnalysis();", diagnostic);
         Assert.Contains("인체 치수", diagnostic);
@@ -675,7 +760,8 @@ public class AppSourceTests
         Assert.Contains("어깨너비", diagnostic);
         Assert.Contains("전체 거리맵은 계속 계산합니다", diagnostic);
         Assert.DoesNotContain("return;", diagnostic);
-        Assert.Contains("인체 적용 최대", method);
+        Assert.Contains("전체 최대", method);
+        Assert.DoesNotContain("인체 적용 최대", method);
         Assert.Contains("경로 없음", method);
     }
 
@@ -833,7 +919,7 @@ public class AppSourceTests
     {
         string source = ReadAppFile("MainWindow.xaml.cs");
         int clearedSelectionStatusIndex = source.IndexOf("출구 선택을 해제했습니다.", StringComparison.Ordinal);
-        int analysisNullReturnIndex = source.IndexOf("_bodyGrid is null || _bodyResult is null", StringComparison.Ordinal);
+        int analysisNullReturnIndex = source.IndexOf("activeGrid is null || activeResult is null", StringComparison.Ordinal);
 
         Assert.True(clearedSelectionStatusIndex >= 0, "Expected a status message clearing stale exit-selection text.");
         Assert.True(analysisNullReturnIndex >= 0, "Expected the analysis-null early return guard in OnCanvasLeftClick.");
@@ -890,7 +976,7 @@ public class AppSourceTests
         string source = ReadAppFile("MainWindow.xaml.cs");
         string success = Slice(source, "_bodyResult = results.Body", "catch (Exception ex) when");
 
-        Assert.Contains("_bodyResult.UnreachableCellCount > 0", success);
+        Assert.Contains("activeResult.UnreachableCellCount > 0", success);
         Assert.Contains("StatusText.Text +=", success);
         Assert.DoesNotContain("MessageBox.Show", success);
     }
@@ -930,7 +1016,7 @@ public class AppSourceTests
     public void MainWindow_RejectsOutsideBuildingBeforePathLookup()
     {
         string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasLeftClick");
-        int outsideGuard = method.IndexOf("!_bodyGrid.Contains(worldPoint)", StringComparison.Ordinal);
+        int outsideGuard = method.IndexOf("!activeGrid.Contains(worldPoint)", StringComparison.Ordinal);
         int findPath = method.IndexOf("DistanceMapCalculator.FindPath", StringComparison.Ordinal);
 
         Assert.True(outsideGuard >= 0);
@@ -942,10 +1028,11 @@ public class AppSourceTests
     public void MainWindow_CalculationFailuresClearStaleAnalysisAndShowKoreanGuidance()
     {
         string source = ReadAppFile("MainWindow.xaml.cs");
-        string preFailureClear = Slice(source, "var grids = await Task.Run", "if (_mapGrid.InteriorCellCount == 0)");
+        string preFailureClear = Slice(source, "var mapGridTask = Task.Run", "if (_mapGrid.InteriorCellCount == 0)");
         string openOutline = Slice(source, "if (_mapGrid.InteriorCellCount == 0)", "var sourceSets =");
-        string noExit = Slice(source, "if (sourceSets.Map.Count == 0)", "var results = await Task.Run");
-        string allocationFailure = Slice(source, "catch (Exception ex) when", "\n        catch (Exception ex)");
+        string noExit = Slice(source, "if (sourceSets.Map.Count == 0)", "var mapResultTask = Task.Run");
+        string allocationFailure = Slice(source,
+            "catch (Exception ex) when (ex is OutOfMemoryException", "\n        catch (Exception)");
 
         AssertFailureClearsQuery(preFailureClear);
         Assert.Contains("닫힌 건물 외곽선", openOutline);
@@ -1049,6 +1136,77 @@ public class AppSourceTests
         Assert.Contains("maxScale", build);
         Assert.DoesNotContain("double.PositiveInfinity", build);
         Assert.DoesNotContain("double.NegativeInfinity", build);
+    }
+
+    [Fact]
+    public void MainWindow_OpenDxf_ShowsDxfDiagnosticsAffordance_NonBlockingAndOnlyWhenNonEmpty()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnOpenDxf");
+        string update = ReadAppMethod("MainWindow.xaml.cs", "private void UpdateDxfDiagnostics");
+
+        Assert.Contains("x:Name=\"DxfDiagnosticsText\"", xaml);
+        Assert.Contains("Visibility=\"Collapsed\"", xaml.Split("DxfDiagnosticsText")[1].Split(">")[0]);
+        Assert.Contains("UpdateDxfDiagnostics(document.Diagnostics)", method);
+        Assert.Contains("if (!diagnostics.HasIssues)", update);
+        Assert.Contains("DxfDiagnosticsText.Visibility = Visibility.Collapsed", update);
+        Assert.Contains("DxfDiagnosticsText.Visibility = Visibility.Visible", update);
+        Assert.DoesNotContain("ShowDialog(", update);
+        Assert.DoesNotContain("MessageBox.Show(", update);
+    }
+
+    [Fact]
+    public void MainWindow_DxfDiagnosticsDetail_NeverLeaksContinuousEngineReasonCodes()
+    {
+        string update = ReadAppMethod("MainWindow.xaml.cs", "private static string BuildDxfDiagnosticsDetail");
+
+        Assert.DoesNotContain("ContinuousGeometryDiagnostics", update);
+        Assert.DoesNotContain("reason", update, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void MainWindow_HasPersistentEngineStatusLabelDistinctFromTransientStatusText()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+
+        Assert.Contains("x:Name=\"EngineStatusText\"", xaml);
+        Assert.Equal(1, xaml.Split("x:Name=\"EngineStatusText\"").Length - 1);
+        Assert.Contains("x:Name=\"StatusText\"", xaml);
+    }
+
+    [Fact]
+    public void MainWindow_OnCalculate_SetsPersistentEngineStatusLabelForAllThreeEngineStates()
+    {
+        string calculate = ReadAppMethod("MainWindow.xaml.cs", "private async void OnCalculate");
+        int engineStatusAssign = calculate.IndexOf("string engineStatus =", StringComparison.Ordinal);
+        int labelAssign = calculate.IndexOf("EngineStatusText.Text = $\"계산 방식: {engineStatus}\"", StringComparison.Ordinal);
+
+        Assert.True(engineStatusAssign >= 0 && labelAssign > engineStatusAssign,
+            "Expected the persistent engine-status label to be set from the same engineStatus value already computed for StatusText.");
+        Assert.Contains("\"Theta* 대체 방식\"", calculate);
+        Assert.Contains("\"연속 경로 방식\"", calculate);
+        Assert.Contains("\"Theta* 방식\"", calculate);
+    }
+
+    [Fact]
+    public void MainWindow_EngineStatusLabel_NotOverwrittenByClickQueryStatusUpdates()
+    {
+        string click = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasLeftClick");
+        string mouseMove = ReadAppMethod("MainWindow.xaml.cs", "private void OnCanvasMouseMove");
+
+        Assert.Contains("StatusText.Text", click);
+        Assert.DoesNotContain("EngineStatusText", click);
+        Assert.DoesNotContain("EngineStatusText", mouseMove);
+    }
+
+    [Fact]
+    public void MainWindow_EngineExplainerTooltip_HasNoUserFacingEngineSelectionControl()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+        string engineStatusElement = Slice(xaml, "x:Name=\"EngineStatusText\"", "/>");
+
+        Assert.Contains("ToolTip=", engineStatusElement);
+        Assert.DoesNotContain("ComboBox", xaml.Split("EngineStatusText")[1].Split("</StatusBarItem>")[0]);
     }
 
     private static void AssertFailureClearsQuery(string source)

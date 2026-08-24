@@ -7,11 +7,19 @@ public sealed record DistanceMapResult(
     int UnreachableCellCount,
     (int Col, int Row)?[,] Predecessor)
 {
+    public const string ThetaEngine = "theta-star";
+    public const string ThetaPolicyVersion = "theta-star-v1";
+    public const string ContinuousEngine = "continuous";
+
+    public string Engine { get; init; } = ThetaEngine;
+    public string PolicyVersion { get; init; } = ThetaPolicyVersion;
+    public string? ModelHash { get; init; }
     internal IReadOnlyDictionary<(int Col, int Row), DistanceRoot> Roots { get; init; } =
         new Dictionary<(int Col, int Row), DistanceRoot>();
     internal IReadOnlyList<IReadOnlyList<DistanceSource>> SourceGroups { get; init; } =
         Array.Empty<IReadOnlyList<DistanceSource>>();
     internal int[,]? WinningGroupIndexes { get; init; }
+    internal ContinuousShortestPathMap? ContinuousMap { get; init; }
 }
 
 public readonly record struct DistanceSource(
@@ -45,11 +53,17 @@ internal sealed record DistanceField(
 /// </summary>
 public static class DistanceMapCalculator
 {
+    private static readonly FieldConcurrencyBudget FieldBudget =
+        new(PhysicalCoreDetector.GetWorkerCount());
     private static readonly int[] Dc = { -1, 0, 1, -1, 1, -1, 0, 1 };
     private static readonly int[] Dr = { -1, -1, -1, 0, 0, 1, 1, 1 };
 
-    public static DistanceMapResult Compute(WalkabilityGrid grid, IReadOnlyList<(int Col, int Row)> sources)
+    public static DistanceMapResult Compute(
+        WalkabilityGrid grid,
+        IReadOnlyList<(int Col, int Row)> sources,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var centeredSources = sources
             .Select(source => new DistanceSource(
                 source.Col,
@@ -61,57 +75,78 @@ public static class DistanceMapCalculator
                     ? grid.CellCenter(source.Col, source.Row)
                     : null))
             .ToList();
-        return Compute(grid, centeredSources);
+        return Compute(grid, centeredSources, cancellationToken);
     }
 
-    public static DistanceMapResult Compute(WalkabilityGrid grid, IReadOnlyList<DistanceSource> sources)
+    public static DistanceMapResult Compute(
+        WalkabilityGrid grid,
+        IReadOnlyList<DistanceSource> sources,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var sourceGroups = GroupSources(sources);
-        var dist = CreateDistanceArray(grid);
+        var dist = CreateDistanceArray(grid, cancellationToken);
         var predecessor = new (int Col, int Row)?[grid.Rows, grid.Cols];
         var roots = new Dictionary<(int Col, int Row), DistanceRoot>();
         var winningGroups = new int[grid.Rows, grid.Cols];
         for (int row = 0; row < grid.Rows; row++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             for (int col = 0; col < grid.Cols; col++)
             {
                 winningGroups[row, col] = -1;
             }
         }
 
-        for (int groupIndex = 0; groupIndex < sourceGroups.Count; groupIndex++)
-        {
-            var field = ComputeField(grid, sourceGroups[groupIndex]);
-            for (int row = 0; row < grid.Rows; row++)
+        var compositionLock = new object();
+        Parallel.For(0, sourceGroups.Count,
+            new ParallelOptions
             {
-                for (int col = 0; col < grid.Cols; col++)
+                CancellationToken = cancellationToken,
+                MaxDegreeOfParallelism = FieldBudget.Capacity,
+            },
+            groupIndex =>
+            {
+                using var slot = FieldBudget.Enter(cancellationToken);
+                var field = ComputeField(grid, sourceGroups[groupIndex], cancellationToken);
+                lock (compositionLock)
                 {
-                    if (field.Distances[row, col] >= dist[row, col])
+                    for (int row = 0; row < grid.Rows; row++)
                     {
-                        continue;
-                    }
+                        cancellationToken.ThrowIfCancellationRequested();
+                        for (int col = 0; col < grid.Cols; col++)
+                        {
+                            double candidate = field.Distances[row, col];
+                            int winner = winningGroups[row, col];
+                            if (candidate > dist[row, col] ||
+                                candidate == dist[row, col] && (winner < 0 || groupIndex >= winner))
+                            {
+                                continue;
+                            }
 
-                    dist[row, col] = field.Distances[row, col];
-                    predecessor[row, col] = field.Predecessor[row, col];
-                    winningGroups[row, col] = groupIndex;
-                    var cell = (Col: col, Row: row);
-                    if (field.Roots.TryGetValue(cell, out var root))
-                    {
-                        roots[cell] = root;
-                    }
-                    else
-                    {
-                        roots.Remove(cell);
+                            dist[row, col] = candidate;
+                            predecessor[row, col] = field.Predecessor[row, col];
+                            winningGroups[row, col] = groupIndex;
+                            var cell = (Col: col, Row: row);
+                            if (field.Roots.TryGetValue(cell, out var root))
+                            {
+                                roots[cell] = root;
+                            }
+                            else
+                            {
+                                roots.Remove(cell);
+                            }
+                        }
                     }
                 }
-            }
-        }
+            });
 
         (int Col, int Row)? farthest = null;
         double maxDistance = 0;
         int unreachableCellCount = 0;
         for (int row = 0; row < grid.Rows; row++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             for (int col = 0; col < grid.Cols; col++)
             {
                 if (!grid.IsWalkable(col, row))
@@ -143,9 +178,10 @@ public static class DistanceMapCalculator
 
     private static DistanceField ComputeField(
         WalkabilityGrid grid,
-        IReadOnlyList<DistanceSource> sources)
+        IReadOnlyList<DistanceSource> sources,
+        CancellationToken cancellationToken = default)
     {
-        var dist = CreateDistanceArray(grid);
+        var dist = CreateDistanceArray(grid, cancellationToken);
         var visited = new bool[grid.Rows, grid.Cols];
         var predecessor = new (int Col, int Row)?[grid.Rows, grid.Cols];
         var roots = new Dictionary<(int Col, int Row), DistanceRoot>();
@@ -153,6 +189,7 @@ public static class DistanceMapCalculator
 
         foreach (var source in sources)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var cell = (source.Col, source.Row);
             if (!grid.IsWalkable(cell.Col, cell.Row))
             {
@@ -182,6 +219,7 @@ public static class DistanceMapCalculator
 
         while (queue.TryDequeue(out var current, out _))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (visited[current.Row, current.Col])
             {
                 continue;
@@ -259,11 +297,14 @@ public static class DistanceMapCalculator
         return new DistanceField(dist, predecessor, roots);
     }
 
-    private static double[,] CreateDistanceArray(WalkabilityGrid grid)
+    private static double[,] CreateDistanceArray(
+        WalkabilityGrid grid,
+        CancellationToken cancellationToken = default)
     {
         var distances = new double[grid.Rows, grid.Cols];
         for (int row = 0; row < grid.Rows; row++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             for (int col = 0; col < grid.Cols; col++)
             {
                 distances[row, col] = double.PositiveInfinity;
@@ -319,6 +360,14 @@ public static class DistanceMapCalculator
         DistanceMapResult result,
         WorldPoint point)
     {
+        if (result.Engine == DistanceMapResult.ContinuousEngine)
+        {
+            var path = result.ContinuousMap?.Query(point);
+            return path is null
+                ? null
+                : new WalkingPath(path.Points, path.Distance, point, path.Arrival);
+        }
+
         if (!IsFinite(point) ||
             point.X < grid.Bounds.MinX || point.X > grid.Bounds.MaxX ||
             point.Y < grid.Bounds.MinY || point.Y > grid.Bounds.MaxY)

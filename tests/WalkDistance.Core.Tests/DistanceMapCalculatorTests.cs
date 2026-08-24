@@ -343,6 +343,70 @@ public class DistanceMapCalculatorTests
     }
 
     [Fact]
+    public void Compute_MultiExitCompositionIsEquivalentWhenSourceGroupsAreReordered()
+    {
+        var grid = GridFromBlocked([]);
+        DistanceSource Source(int col, int row, int groupId) =>
+            new(col, row, grid.CellCenter(col, row), ExitGroupId: groupId);
+        DistanceSource[] leftExit = [Source(2, 2, 1), Source(2, 3, 1)];
+        DistanceSource[] rightExit = [Source(8, 6, 2), Source(8, 7, 2)];
+
+        var leftFirst = DistanceMapCalculator.Compute(grid, [.. leftExit, .. rightExit]);
+        var rightFirst = DistanceMapCalculator.Compute(grid, [.. rightExit, .. leftExit]);
+        var query = grid.CellCenter(3, 4);
+        var leftFirstPath = DistanceMapCalculator.FindPath(grid, leftFirst, query)!;
+        var rightFirstPath = DistanceMapCalculator.FindPath(grid, rightFirst, query)!;
+
+        Assert.Equal(leftFirst.Distances.Cast<double>(), rightFirst.Distances.Cast<double>());
+        Assert.Equal(leftFirst.FarthestCell, rightFirst.FarthestCell);
+        Assert.Equal(leftFirst.MaxDistance, rightFirst.MaxDistance);
+        Assert.Equal(leftFirst.UnreachableCellCount, rightFirst.UnreachableCellCount);
+        Assert.Equal(leftFirstPath.Points, rightFirstPath.Points);
+        Assert.Equal(leftFirstPath.Distance, rightFirstPath.Distance);
+    }
+
+    [Fact]
+    public void Compute_EqualDistanceTiesAcrossParallelCompletionKeepSourceGroupOrder()
+    {
+        var grid = GridFromBlocked([]);
+        var left = new DistanceSource(2, 2, grid.CellCenter(2, 2), ExitGroupId: 1);
+        var farther = new DistanceSource(5, 8, grid.CellCenter(5, 8), ExitGroupId: 2);
+        var right = new DistanceSource(8, 2, grid.CellCenter(8, 2), ExitGroupId: 3);
+        var query = grid.CellCenter(5, 2);
+
+        var leftFirst = DistanceMapCalculator.FindPath(
+            grid, DistanceMapCalculator.Compute(grid, [left, farther, right]), query)!;
+        var rightFirst = DistanceMapCalculator.FindPath(
+            grid, DistanceMapCalculator.Compute(grid, [right, farther, left]), query)!;
+
+        Assert.Equal(leftFirst.Distance, rightFirst.Distance);
+        Assert.Equal(left.ExitPoint, leftFirst.Arrival);
+        Assert.Equal(right.ExitPoint, rightFirst.Arrival);
+    }
+
+    [Fact]
+    public void Compute_ParallelFieldStorageIsBoundedBySharedWorkerBudget()
+    {
+        string source = ReadCoreFile("DistanceMapCalculator.cs");
+
+        Assert.Contains("FieldBudget.Enter(cancellationToken)", source);
+        Assert.Contains("lock (compositionLock)", source);
+        Assert.DoesNotContain("new DistanceField[", source);
+        Assert.DoesNotContain("ParallelFieldBatchSize", source);
+    }
+
+    [Fact]
+    public void Compute_ObservesCancellationBeforePublishingAThetaResult()
+    {
+        var grid = WalkabilityGrid.Build(Rectangle(0, 0, 1, 1), cellSize: 0.1, marginCells: 0);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() => DistanceMapCalculator.Compute(
+            grid, [(Col: 1, Row: 1)], cancellation.Token));
+    }
+
+    [Fact]
     public void FindPath_ChoosesNearestExitGroupFromTheActualPoint()
     {
         var grid = WalkabilityGrid.Build(Rectangle(0, 0, 1, 1), cellSize: 0.1, marginCells: 0);
@@ -522,6 +586,18 @@ public class DistanceMapCalculatorTests
         Assert.Null(DistanceMapCalculator.GetPath(grid, result, new WorldPoint(0, 0)));
         Assert.Null(DistanceMapCalculator.GetPath(grid, result, new WorldPoint(-100, -100)));
         Assert.Null(DistanceMapCalculator.GetPath(grid, result, new WorldPoint(5, 1)));
+    }
+
+    private static string ReadCoreFile(string fileName)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "WalkDistance.sln")))
+        {
+            directory = directory.Parent;
+        }
+
+        Assert.NotNull(directory);
+        return File.ReadAllText(Path.Combine(directory!.FullName, "src", "WalkDistance.Core", fileName));
     }
 
     private static List<Segment> Rectangle(double minX, double minY, double maxX, double maxY)

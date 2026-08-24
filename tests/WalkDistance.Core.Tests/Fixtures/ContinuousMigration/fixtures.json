@@ -1,0 +1,104 @@
+[
+  {
+    "id": "T-OPEN",
+    "walls": [[0,0,10,0],[10,0,10,10],[10,10,0,10],[0,10,0,0]],
+    "exits": [[[0,4],[0,6]]],
+    "queries": [{"point":[8,5],"distance":8.0,"exit":0,"contact":[0,5]}],
+    "bodyRadius": 0.2,
+    "bodyQueries": [{"point":[8,5],"distance":7.8,"exit":0,"arrival":[0.2,5]}]
+  },
+  {
+    "id": "T-DETOUR",
+    "walls": [[0,0,10,0],[10,0,10,10],[10,10,0,10],[0,10,0,0],[5,0,5,8]],
+    "exits": [[[0,4],[0,6]]],
+    "queries": [{"point":[8,5],"distance":9.627805494,"exit":0,"contact":[0,6]}]
+  },
+  {
+    "id": "T-MULTI-TIE",
+    "walls": [[0,0,10,0],[10,0,10,10],[10,10,0,10],[0,10,0,0]],
+    "exits": [[[0,4],[0,6]],[[10,4],[10,6]]],
+    "queries": [
+      {"point":[5,5],"distance":5.0,"exit":0,"contact":[0,5]},
+      {"point":[8,5],"distance":2.0,"exit":1,"contact":[10,5]}
+    ]
+  },
+  {
+    "id": "T-DISCONNECTED",
+    "walls": [[0,0,4,0],[4,0,4,4],[4,4,0,4],[0,4,0,0],[6,0,10,0],[10,0,10,4],[10,4,6,4],[6,4,6,0]],
+    "exits": [[[0,1],[0,3]]],
+    "queries": [
+      {"point":[2,2],"distance":2.0,"exit":0,"contact":[0,2]},
+      {"point":[8,2],"distance":null,"exit":null,"contact":null}
+    ]
+  },
+  {
+    "id": "T-NARROW-GAP",
+    "walls": [[0,0,10,0],[10,0,10,10],[10,10,0,10],[0,10,0,0],[5,0,5,4.85],[5,5.15,5,10]],
+    "exits": [[[0,4],[0,6]]],
+    "queries": [{"point":[8,5],"distance":8.0,"exit":0,"contact":[0,5]}],
+    "bodyRadius": 0.2,
+    "bodyQueries": [{"point":[8,5],"distance":null,"exit":null,"arrival":null}]
+  },
+  {
+    "id": "T-SHORT-EXIT",
+    "walls": [[0,0,10,0],[10,0,10,10],[10,10,0,10],[0,10,0,0]],
+    "exits": [[[0,4.85],[0,5.15]]],
+    "queries": [{"point":[5,5],"distance":5.0,"exit":0,"contact":[0,5]}],
+    "bodyRadius": 0.2,
+    "bodyBuildReason": "ALL_EXITS_REJECTED"
+  },
+  {
+    "id": "T-INTERNAL-EXIT",
+    "walls": [[0,0,10,0],[10,0,10,10],[10,10,0,10],[0,10,0,0],[5,0,5,10]],
+    "exits": [[[5,4],[5,6]]],
+    "queries": [
+      {"point":[2,5],"distance":3.0,"exit":0,"contact":[5,5]},
+      {"point":[8,5],"distance":3.0,"exit":0,"contact":[5,5]}
+    ],
+    "bodyRadius": 0.2,
+    "bodyQueries": [
+      {"point":[2,5],"distance":2.8,"exit":0,"arrival":[4.8,5]},
+      {"point":[8,5],"distance":2.8,"exit":0,"arrival":[5.2,5]}
+    ]
+  },
+  {
+    "id": "T-BENT-EXIT",
+    "walls": [[0,0,10,0],[10,0,10,10],[10,10,0,10],[0,10,0,0],[5,2,5,5],[5,5,8,5]],
+    "exits": [[[5,2],[5,5],[8,5]]],
+    "queries": [
+      {"point":[2,4],"distance":3.0,"exit":0,"contact":[5,4]},
+      {"point":[7,8],"distance":3.0,"exit":0,"contact":[7,5]}
+    ],
+    "bodyRadius": 0.2,
+    "bodyQueries": [
+      {"point":[2,4],"distance":2.8,"exit":0,"arrival":[4.8,4]},
+      {"point":[7,8],"distance":2.8,"exit":0,"arrival":[7,5.2]}
+    ]
+  },
+  {
+    "id": "T-PRECISION",
+    "walls": [[0,0,5,0],[5.0000004,0,10,0],[10,0,10,10],[10,10,0,10],[0,10,0,0],[0,0,5,0],[5,0,0,0]],
+    "exits": [[[0,4],[0,6]]],
+    "queries": [{"point":[8,5],"distance":8.0,"exit":0,"contact":[0,5]}]
+  },
+  {
+    "id": "T-OPEN-INVALID",
+    "walls": [[0,0,10,0],[10,0,10,10],[10,10,0,10]],
+    "exits": [[[0,4],[0,6]]],
+    "buildReason": "NO_BOUNDED_FACE"
+  },
+  {
+    "id": "T-EXIT-BLOCKED",
+    "walls": [[0,0,10,0],[10,0,10,10],[10,10,0,10],[0,10,0,0],[0.02,0,0.02,10]],
+    "exits": [[[0,4],[0,6]]],
+    "queries": [{"point":[5,5],"distance":null,"exit":null,"contact":null}],
+    "bodyRadius": 0.2,
+    "bodyBuildReason": "ALL_EXITS_REJECTED"
+  },
+  {
+    "id": "T-LEGACY-POINT",
+    "walls": [[0,0,10,0],[10,0,10,10],[10,10,0,10],[0,10,0,0]],
+    "exits": [[[0,5],[0,5]],[[10,4],[10,6]]],
+    "buildReason": "LEGACY_POINT_EXIT_UNSUPPORTED"
+  }
+]

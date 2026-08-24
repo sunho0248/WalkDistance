@@ -26,7 +26,11 @@ public sealed record DistanceMapCache(
     WorldPoint? FarthestPathStart = null,
     WorldPoint? FarthestPathArrival = null,
     WorldPoint? QueryPathStart = null,
-    WorldPoint? QueryPathArrival = null)
+    WorldPoint? QueryPathArrival = null,
+    string Engine = DistanceMapResult.ThetaEngine,
+    string PolicyVersion = DistanceMapResult.ThetaPolicyVersion,
+    int CacheSchemaVersion = 1,
+    string? ModelHash = null)
 {
     public static DistanceMapCache Create(
         WalkabilityGrid grid,
@@ -60,23 +64,44 @@ public sealed record DistanceMapCache(
             farthestPathStart,
             farthestPathArrival,
             queryPathStart,
-            queryPathArrival);
+            queryPathArrival,
+            result.Engine,
+            result.PolicyVersion,
+            1,
+            result.ModelHash);
 
     public bool IsCompatibleWith(WalkabilityGrid grid) =>
-        BodyProfile is null && grid.ClearanceRadius == 0 && HasExpectedDimensions(grid);
+        IsCompatibleWith(grid, DistanceMapResult.ThetaEngine, DistanceMapResult.ThetaPolicyVersion);
+
+    public bool IsCompatibleWith(WalkabilityGrid grid, string engine, string policyVersion) =>
+        BodyProfile is null && grid.ClearanceRadius == 0 &&
+        HasExpectedProvenance(engine, policyVersion) && HasExpectedDimensions(grid);
 
     public bool IsCompatibleWith(WalkabilityGrid grid, BodyProfile bodyProfile) =>
+        IsCompatibleWith(grid, bodyProfile,
+            DistanceMapResult.ThetaEngine, DistanceMapResult.ThetaPolicyVersion);
+
+    public bool IsCompatibleWith(
+        WalkabilityGrid grid,
+        BodyProfile bodyProfile,
+        string engine,
+        string policyVersion) =>
         BodyProfile == bodyProfile && bodyProfile.IsValid &&
         grid.ClearanceRadius == bodyProfile.ClearanceRadius &&
         (grid.ClearanceRadius == 0 || SourceGroups.All(group => group.All(source => source.ArrivalPoint is not null))) &&
+        HasExpectedProvenance(engine, policyVersion) &&
         HasExpectedDimensions(grid);
+
+    public bool CanRestoreCompleteResult => Engine == DistanceMapResult.ThetaEngine;
 
     public bool IsSane
     {
         get
         {
             if (Rows <= 0 || Cols <= 0 || Distances is null || Predecessors is null ||
-                Roots is null || SourceGroups is null || WinningGroupIndexes is null)
+                Roots is null || SourceGroups is null || WinningGroupIndexes is null ||
+                CacheSchemaVersion != 1 || string.IsNullOrWhiteSpace(Engine) ||
+                string.IsNullOrWhiteSpace(PolicyVersion))
             {
                 return false;
             }
@@ -108,6 +133,9 @@ public sealed record DistanceMapCache(
             UnreachableCellCount,
             Expand(Predecessors))
         {
+            Engine = Engine,
+            PolicyVersion = PolicyVersion,
+            ModelHash = ModelHash,
             Roots = Roots.ToDictionary(root => (root.Cell.Col, root.Cell.Row),
                 root => new DistanceRoot(
                     root.Contact,
@@ -150,6 +178,9 @@ public sealed record DistanceMapCache(
 
     private bool HasExpectedDimensions(WalkabilityGrid grid) =>
         IsSane && grid.Rows == Rows && grid.Cols == Cols;
+
+    private bool HasExpectedProvenance(string engine, string policyVersion) =>
+        Engine == engine && PolicyVersion == policyVersion;
 }
 
 public sealed record CachedAnalysis(

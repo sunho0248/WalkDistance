@@ -1,0 +1,11 @@
+{
+  "id": "B-SAMPLE",
+  "exits": [
+    [
+      [0, 3],
+      [0, 5]
+    ]
+  ],
+  "bodyRadius": 0,
+  "cellSize": 0.25
+}

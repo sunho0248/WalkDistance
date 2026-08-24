@@ -183,9 +183,8 @@ public static class ProjectFile
             BodyProfile = profile,
             Analysis = data.Analysis is { BodyProfile: null, IsSane: true } ? data.Analysis : null,
             BodyAnalysis = data.BodyAnalysis is { IsSane: true } bodyCache &&
-                           (data.ApplyBodyMeasurements
-                               ? bodyCache.BodyProfile == profile
-                               : bodyCache.BodyProfile is null)
+                           (bodyCache.BodyProfile == profile ||
+                            !data.ApplyBodyMeasurements && bodyCache.BodyProfile is null)
                 ? data.BodyAnalysis
                 : null,
         };
