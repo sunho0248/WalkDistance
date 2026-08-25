@@ -71,16 +71,52 @@ public partial class MainWindow : Window
 
     private void OnOpenDxf(object sender, RoutedEventArgs e)
     {
-        if (!ConfirmDiscardChanges()) return;
         var dialog = new OpenFileDialog { Filter = "DXF 파일|*.dxf|모든 파일|*.*" };
         if (dialog.ShowDialog() != true)
         {
             return;
         }
 
+        OpenDxf(dialog.FileName);
+    }
+
+    private void OnWindowPreviewDragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = TryGetDroppedDxf(e, out _) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void OnWindowPreviewDrop(object sender, DragEventArgs e)
+    {
+        if (TryGetDroppedDxf(e, out string path))
+        {
+            OpenDxf(path);
+        }
+        e.Handled = true;
+    }
+
+    private static bool TryGetDroppedDxf(DragEventArgs e, out string path)
+    {
+        path = string.Empty;
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop) ||
+            e.Data.GetData(DataFormats.FileDrop) is not string[] { Length: 1 } files ||
+            !System.IO.File.Exists(files[0]) ||
+            !System.IO.Path.GetExtension(files[0]).Equals(".dxf", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        path = files[0];
+        return true;
+    }
+
+    private void OpenDxf(string path)
+    {
+        if (!ConfirmDiscardChanges()) return;
+
         try
         {
-            var document = LoadDxfWithUnitSelection(dialog.FileName);
+            var document = LoadDxfWithUnitSelection(path);
             if (document is null)
             {
                 return;
@@ -90,12 +126,12 @@ public partial class MainWindow : Window
             _wallIndex = WallIndex.Build(_walls);
             CacheWallGeometry();
             _metersPerDrawingUnit = document.MetersPerDrawingUnit;
-            _dxfPath = dialog.FileName;
+            _dxfPath = path;
             _projectPath = null;
             ResetAnalysis(clearExits: true);
             _exitEditor.LoadPaths(document.ExitPaths);
             SetDirty(false);
-            StatusText.Text = $"{System.IO.Path.GetFileName(dialog.FileName)} 불러옴 · 벽 선분 {_walls.Count:N0}개 · 자동 불러온 출구 {document.ExitPaths.Count:N0}개 · 1 도면 단위 = {_metersPerDrawingUnit:G6} m";
+            StatusText.Text = $"{System.IO.Path.GetFileName(path)} 불러옴 · 벽 선분 {_walls.Count:N0}개 · 자동 불러온 출구 {document.ExitPaths.Count:N0}개 · 1 도면 단위 = {_metersPerDrawingUnit:G6} m";
             UpdateDxfDiagnostics(document.Diagnostics);
             FitView();
             Redraw();

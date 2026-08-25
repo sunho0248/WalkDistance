@@ -340,12 +340,44 @@ public class AppSourceTests
     [Fact]
     public void MainWindow_DirectDxfOpenLoadsAutomaticExitPathsAfterResetAndReportsCount()
     {
-        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnOpenDxf");
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OpenDxf");
         int reset = method.IndexOf("ResetAnalysis(clearExits: true)", StringComparison.Ordinal);
         int load = method.IndexOf("_exitEditor.LoadPaths(document.ExitPaths)", StringComparison.Ordinal);
 
         Assert.True(reset >= 0 && load > reset);
         Assert.Contains("자동 불러온 출구 {document.ExitPaths.Count:N0}개", method);
+    }
+
+    [Fact]
+    public void MainWindow_DropsOnlyOneExistingDxfThroughTheSharedOpenPath()
+    {
+        string xaml = ReadAppFile("MainWindow.xaml");
+        string source = ReadAppFile("MainWindow.xaml.cs");
+
+        Assert.Contains("AllowDrop=\"True\"", xaml);
+        Assert.Contains("PreviewDragOver=\"OnWindowPreviewDragOver\"", xaml);
+        Assert.Contains("PreviewDrop=\"OnWindowPreviewDrop\"", xaml);
+        Assert.Contains("DataFormats.FileDrop", source);
+        Assert.Contains("string[] { Length: 1 }", source);
+        Assert.Contains("File.Exists", source);
+        Assert.Contains("\".dxf\"", source);
+        Assert.Contains("StringComparison.OrdinalIgnoreCase", source);
+        string dragOver = ReadAppMethod("MainWindow.xaml.cs", "private void OnWindowPreviewDragOver");
+        Assert.Contains("DragDropEffects.Copy", dragOver);
+        Assert.Contains("DragDropEffects.None", dragOver);
+        Assert.Contains("OpenDxf(path);", ReadAppMethod(
+            "MainWindow.xaml.cs", "private void OnWindowPreviewDrop"));
+        Assert.Contains("OpenDxf(dialog.FileName);", ReadAppMethod(
+            "MainWindow.xaml.cs", "private void OnOpenDxf"));
+
+        string open = ReadAppMethod("MainWindow.xaml.cs", "private void OpenDxf");
+        Assert.Contains("ConfirmDiscardChanges()", open);
+        Assert.Contains("LoadDxfWithUnitSelection(path)", open);
+        Assert.Contains("UpdateDxfDiagnostics(document.Diagnostics)", open);
+        Assert.Contains("_exitEditor.LoadPaths(document.ExitPaths)", open);
+        Assert.Contains("SetDirty(false);", open);
+        Assert.Contains("FitView();", open);
+        Assert.Contains("Redraw();", open);
     }
 
     [Fact]
@@ -1054,7 +1086,7 @@ public class AppSourceTests
     [Fact]
     public void MainWindow_OpenDxf_ExplicitlyFitsViewToWallBoundsBeforeRedraw()
     {
-        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnOpenDxf");
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OpenDxf");
         int fitIndex = method.IndexOf("FitView();", StringComparison.Ordinal);
         int redrawIndex = method.IndexOf("Redraw();", StringComparison.Ordinal);
         Assert.True(fitIndex >= 0, "Expected OnOpenDxf to explicitly call FitView() to reset the view to the loaded geometry.");
@@ -1142,7 +1174,7 @@ public class AppSourceTests
     public void MainWindow_OpenDxf_ShowsDxfDiagnosticsAffordance_NonBlockingAndOnlyWhenNonEmpty()
     {
         string xaml = ReadAppFile("MainWindow.xaml");
-        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OnOpenDxf");
+        string method = ReadAppMethod("MainWindow.xaml.cs", "private void OpenDxf");
         string update = ReadAppMethod("MainWindow.xaml.cs", "private void UpdateDxfDiagnostics");
 
         Assert.Contains("x:Name=\"DxfDiagnosticsText\"", xaml);
@@ -1235,7 +1267,8 @@ public class AppSourceTests
         }
 
         Assert.NotNull(directory);
-        return File.ReadAllText(Path.Combine(directory!.FullName, "src", "WalkDistance.App", fileName));
+        return File.ReadAllText(Path.Combine(directory!.FullName, "src", "WalkDistance.App", fileName))
+            .ReplaceLineEndings("\n");
     }
 
     private static string ReadAppMethod(string fileName, string methodSignaturePrefix)

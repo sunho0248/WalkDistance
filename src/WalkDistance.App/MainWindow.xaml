@@ -6,6 +6,7 @@
         xmlns:local="clr-namespace:WalkDistance.App"
         mc:Ignorable="d"
         Title="보행거리 계산" Height="700" Width="1000" MinHeight="500" MinWidth="760"
+        AllowDrop="True" PreviewDragOver="OnWindowPreviewDragOver" PreviewDrop="OnWindowPreviewDrop"
         PreviewKeyDown="OnWindowPreviewKeyDown" Closing="OnWindowClosing">
     <Window.InputBindings>
         <KeyBinding Gesture="Ctrl+S" Command="Save"/>
