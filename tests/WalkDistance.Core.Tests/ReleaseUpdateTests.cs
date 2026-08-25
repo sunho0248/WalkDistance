@@ -15,7 +15,7 @@ public sealed class ReleaseUpdateTests : IDisposable
     {
         using var client = GitHubReleaseClient.CreateClient();
 
-        Assert.Equal("WalkDistance/1.0.5", client.DefaultRequestHeaders.UserAgent.ToString());
+        Assert.Equal("WalkDistance/1.0.6", client.DefaultRequestHeaders.UserAgent.ToString());
     }
 
     [Theory]

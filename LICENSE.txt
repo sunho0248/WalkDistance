@@ -1,0 +1,15 @@
+WalkDistance Proprietary License
+Copyright (c) 2026 백선호. All rights reserved.
+
+WalkDistance, including its source code, executable files, documentation,
+user interface, icons, and other accompanying materials, is proprietary
+software owned by 백선호.
+
+No permission is granted to copy, modify, distribute, sublicense, sell,
+publish, reverse engineer, decompile, or create derivative works from any
+part of WalkDistance except where prior written permission is given by the
+copyright holder or where applicable law expressly prohibits a restriction.
+
+The third-party components identified in THIRD-PARTY-NOTICES.txt are provided
+under their own license terms. Those terms apply to the corresponding
+components and are not restricted by this proprietary license.

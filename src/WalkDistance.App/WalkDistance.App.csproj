@@ -4,6 +4,10 @@
     <ProjectReference Include="..\WalkDistance.Core\WalkDistance.Core.csproj" />
     <ProjectReference Include="..\WalkDistance.Update\WalkDistance.Update.csproj" />
     <ProjectReference Include="..\WalkDistance.Updater\WalkDistance.Updater.csproj" ReferenceOutputAssembly="false" />
+    <Content Include="..\..\LICENSE.txt" Link="LICENSE.txt"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\EULA.md" Link="EULA.md"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\THIRD-PARTY-NOTICES.txt" Link="THIRD-PARTY-NOTICES.txt"
              CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
@@ -17,9 +21,9 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>WalkDistance</AssemblyName>
     <ApplicationIcon>Assets\WalkDistance.ico</ApplicationIcon>
-    <Version>1.0.5</Version>
-    <AssemblyVersion>1.0.5.0</AssemblyVersion>
-    <FileVersion>1.0.5.0</FileVersion>
+    <Version>1.0.6</Version>
+    <AssemblyVersion>1.0.6.0</AssemblyVersion>
+    <FileVersion>1.0.6.0</FileVersion>
   </PropertyGroup>
 
   <Target Name="RemoveLegacyUpdaterPublishDirectory" BeforeTargets="Publish">
@@ -45,6 +49,10 @@
            Text="Publish output must contain WalkDistance.Updater.runtimeconfig.json at its root." />
     <Error Condition="'$(SelfContained)' == 'true' And !Exists('$(PublishDir)hostfxr.dll')"
            Text="Self-contained publish output must contain its runtime files at the root." />
+    <Error Condition="!Exists('$(PublishDir)LICENSE.txt')"
+           Text="Publish output must contain LICENSE.txt at its root." />
+    <Error Condition="!Exists('$(PublishDir)EULA.md')"
+           Text="Publish output must contain EULA.md at its root." />
     <Error Condition="!Exists('$(PublishDir)THIRD-PARTY-NOTICES.txt')"
            Text="Publish output must contain THIRD-PARTY-NOTICES.txt at its root." />
   </Target>
