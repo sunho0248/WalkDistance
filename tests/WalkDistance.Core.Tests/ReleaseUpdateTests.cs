@@ -10,6 +10,14 @@ public sealed class ReleaseUpdateTests : IDisposable
 
     public ReleaseUpdateTests() => Directory.CreateDirectory(_directory);
 
+    [Fact]
+    public void CreateClient_IdentifiesReleaseVersion()
+    {
+        using var client = GitHubReleaseClient.CreateClient();
+
+        Assert.Equal("WalkDistance/1.0.5", client.DefaultRequestHeaders.UserAgent.ToString());
+    }
+
     [Theory]
     [InlineData("v1.3.4", true)]
     [InlineData("1.3.10", true)]
