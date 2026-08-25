@@ -96,6 +96,7 @@
 - ASCII DXF의 `LINE`, `LWPOLYLINE`, `POLYLINE`/`VERTEX`, `CIRCLE`, `ARC`
 - `$INSUNITS` 1~24의 미터 단위 변환. 값이 없거나 0이면 사용자 선택
 - 원과 호의 선분 근사 및 격자화
+- `CIRCLE`/`ARC`의 OCS extrusion normal을 앱의 2D 월드 좌표 변환에 반영
 - `WD_Exit` 레이어의 지원 entity를 도면 순서와 미터 배율 그대로 출구 경로로 자동 등록 (동시에 벽 geometry로 유지)
 
 ### 제약
