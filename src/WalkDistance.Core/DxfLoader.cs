@@ -292,8 +292,8 @@ public static class DxfLoader
             return;
         }
 
-        var start = new WorldPoint(x1, y1);
-        var end = new WorldPoint(x2, y2);
+        var start = OcsToWcs(attrs, x1, y1, GetDoubleOrDefault(attrs, 30, 0));
+        var end = OcsToWcs(attrs, x2, y2, GetDoubleOrDefault(attrs, 31, 0));
         if (start == end)
         {
             diagnostics.RecordZeroLengthSegment();
@@ -387,7 +387,7 @@ public static class DxfLoader
             return;
         }
 
-        TessellateArc(segments, cx, cy, radius, 0, 360, CircleTessellation, diagnostics);
+        TessellateArc(segments, attrs, cx, cy, GetDoubleOrDefault(attrs, 30, 0), radius, 0, 360, CircleTessellation, diagnostics);
     }
 
     private static void AddArc(List<Segment> segments, Dictionary<int, List<string>> attrs, DxfLoadDiagnosticsBuilder diagnostics)
@@ -406,13 +406,15 @@ public static class DxfLoader
         }
 
         int steps = Math.Max(2, (int)(CircleTessellation * (endDegrees - startDegrees) / 360));
-        TessellateArc(segments, cx, cy, radius, startDegrees, endDegrees, steps, diagnostics);
+        TessellateArc(segments, attrs, cx, cy, GetDoubleOrDefault(attrs, 30, 0), radius, startDegrees, endDegrees, steps, diagnostics);
     }
 
     private static void TessellateArc(
         List<Segment> segments,
+        Dictionary<int, List<string>> attrs,
         double cx,
         double cy,
+        double cz,
         double radius,
         double startDegrees,
         double endDegrees,
@@ -423,11 +425,63 @@ public static class DxfLoader
         for (int step = 0; step <= steps; step++)
         {
             double angle = (startDegrees + (endDegrees - startDegrees) * step / steps) * Math.PI / 180;
-            points.Add(new WorldPoint(cx + radius * Math.Cos(angle), cy + radius * Math.Sin(angle)));
+            points.Add(OcsToWcs(attrs, cx + radius * Math.Cos(angle), cy + radius * Math.Sin(angle), cz));
         }
         diagnostics.RecordTessellatedCurve(steps);
         AddChain(segments, points, closed: false, diagnostics);
     }
+
+    private static WorldPoint OcsToWcs(Dictionary<int, List<string>> attrs, double x, double y, double z)
+    {
+        double nx = GetDoubleOrDefault(attrs, 210, 0);
+        double ny = GetDoubleOrDefault(attrs, 220, 0);
+        double nz = GetDoubleOrDefault(attrs, 230, 1);
+        if (nx == 0 && ny == 0 && nz == 1)
+        {
+            return new WorldPoint(x, y);
+        }
+
+        double normalLength = Math.Sqrt(nx * nx + ny * ny + nz * nz);
+        if (normalLength == 0)
+        {
+            return new WorldPoint(x, y);
+        }
+
+        nx /= normalLength;
+        ny /= normalLength;
+        nz /= normalLength;
+
+        double ax;
+        double ay;
+        double az;
+        if (Math.Abs(nx) < 1d / 64 && Math.Abs(ny) < 1d / 64)
+        {
+            ax = nz;
+            ay = 0;
+            az = -nx;
+        }
+        else
+        {
+            ax = -ny;
+            ay = nx;
+            az = 0;
+        }
+
+        double axisLength = Math.Sqrt(ax * ax + ay * ay + az * az);
+        ax /= axisLength;
+        ay /= axisLength;
+        az /= axisLength;
+
+        double bx = ny * az - nz * ay;
+        double by = nz * ax - nx * az;
+        return new WorldPoint(x * ax + y * bx + z * nx, x * ay + y * by + z * ny);
+    }
+
+    private static double GetDoubleOrDefault(
+        Dictionary<int, List<string>> attrs,
+        int code,
+        double defaultValue) =>
+        TryGetDouble(attrs, code, 0, out var value) ? value : defaultValue;
 
     private static bool TryGetDouble(
         Dictionary<int, List<string>> attrs,

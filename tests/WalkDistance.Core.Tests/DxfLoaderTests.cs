@@ -146,6 +146,71 @@ public class DxfLoaderTests
     }
 
     [Fact]
+    public void Load_TransformsExtrudedLineCircleAndArcFromOcsToWcs()
+    {
+        using var reader = new StringReader(DxfWithEntities("""
+            0
+            LINE
+            10
+            -10
+            20
+            2
+            11
+            -20
+            21
+            3
+            210
+            0
+            220
+            0
+            230
+            -1
+            0
+            CIRCLE
+            10
+            -30
+            20
+            4
+            40
+            1
+            210
+            0
+            220
+            0
+            230
+            -1
+            0
+            ARC
+            10
+            -40
+            20
+            5
+            40
+            2
+            50
+            0
+            51
+            90
+            210
+            0
+            220
+            0
+            230
+            -1
+            """, insUnits: 6));
+
+        var document = DxfLoader.Load(reader);
+
+        Assert.Equal(new Segment(new WorldPoint(10, 2), new WorldPoint(20, 3)), document.Walls[0]);
+        Assert.Equal(29, document.Walls[1].Start.X, precision: 10);
+        Assert.Equal(4, document.Walls[1].Start.Y, precision: 10);
+        Assert.Equal(38, document.Walls[33].Start.X, precision: 10);
+        Assert.Equal(5, document.Walls[33].Start.Y, precision: 10);
+        Assert.Equal(40, document.Walls[^1].End.X, precision: 10);
+        Assert.Equal(7, document.Walls[^1].End.Y, precision: 10);
+    }
+
+    [Fact]
     public void Load_RetainsWdExitLineAndPolylinePathsInOrderAndMeters()
     {
         using var reader = new StringReader(DxfWithEntities("""
