@@ -292,8 +292,8 @@ public static class DxfLoader
             return;
         }
 
-        var start = OcsToWcs(attrs, x1, y1, GetDoubleOrDefault(attrs, 30, 0));
-        var end = OcsToWcs(attrs, x2, y2, GetDoubleOrDefault(attrs, 31, 0));
+        var start = new WorldPoint(x1, y1);
+        var end = new WorldPoint(x2, y2);
         if (start == end)
         {
             diagnostics.RecordZeroLengthSegment();

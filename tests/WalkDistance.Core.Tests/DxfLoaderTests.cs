@@ -146,17 +146,17 @@ public class DxfLoaderTests
     }
 
     [Fact]
-    public void Load_TransformsExtrudedLineCircleAndArcFromOcsToWcs()
+    public void Load_PreservesExtrudedLineWcsAndTransformsCircleAndArcFromOcs()
     {
         using var reader = new StringReader(DxfWithEntities("""
             0
             LINE
             10
-            -10
+            10
             20
             2
             11
-            -20
+            20
             21
             3
             210
